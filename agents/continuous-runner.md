@@ -1,6 +1,6 @@
 ---
 name: continuous-runner
-description: Manages continuous iteration sessions for long-running tasks. Use this agent when the user wants to run multiple iterations on a task, says "keep working on this", "run continuously", or needs autonomous progress on a complex project. Orchestrates the iteration loop with ledger-based context.
+description: Manages continuous iteration sessions for long-running tasks. Use this agent when the user wants to run multiple iterations on a task, says "keep working on this", "run continuously", or needs autonomous progress on a complex project. Orchestrates the iteration loop with ledger-based context. **Orchestration hint**: Deploy for autonomous multi-step work requiring iteration management. For single iterations or simple tasks, prefer direct tool use without spawning this agent.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: opus
 ---

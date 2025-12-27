@@ -276,6 +276,51 @@ def detect_project_type(project_dir: Path) -> dict:
     return result
 
 
+def build_orchestration_guidance() -> str:
+    """Build orchestration guidance for the main Claude instance."""
+    return """## Orchestration Mode
+
+You are the orchestrator for a continuous-claude session. Use this decision matrix:
+
+### Task Complexity Assessment
+| Complexity | Indicators | Action |
+|------------|------------|--------|
+| LOW | Single file, quick lookup, direct query | Use SKILL directly |
+| MEDIUM | 2-3 steps, known pattern, focused scope | Consider SKILL or AGENT |
+| HIGH | Multi-step, research needed, context-dependent | Deploy AGENT |
+
+### Agent vs Skill Decision Tree
+```
+Is this a multi-step workflow requiring analysis?
+├─ YES → Deploy AGENT (e.g., knowledge-retriever, continuous-runner)
+└─ NO → Is it a quick lookup or direct operation?
+    ├─ YES → Use SKILL (e.g., ledger-knowledge, search-learnings)
+    └─ NO → Assess complexity, default to AGENT for unknowns
+```
+
+### Continuous Todo Management
+- **Always** use TodoWrite when starting multi-step work
+- **Immediately** mark tasks complete as you finish them
+- **Never** batch completions - update in real-time
+- **Add** new tasks discovered during work
+
+### Available Resources
+**Agents** (complex workflows):
+- `continuous-runner` - Autonomous multi-iteration sessions
+- `knowledge-retriever` - Deep search and analysis of learnings
+- `learning-extractor` - Analyze conversations for insights
+- `session-continuity` - Full session restoration
+- `outcome-tracker` - Record outcomes, adjust confidence
+
+**Skills** (quick operations):
+- `ledger-knowledge` - Direct ledger queries
+- `learning-capture` - Tag and save learnings
+- `handoff-management` - Save/load WIP state
+- `search-learnings` - Full-text search
+- `continuous-execution` - CLI runner wrapper
+"""
+
+
 def build_context(project_dir: Optional[Path]) -> str:
     """Build context string from ledgers, handoffs, and project info."""
     lines = []
@@ -336,6 +381,9 @@ def build_context(project_dir: Optional[Path]) -> str:
         lines.append("- [ERROR] Mistakes or gotchas to avoid")
         lines.append("- [PATTERN] Reusable solutions identified")
         lines.append("")
+
+    # Add orchestration guidance
+    lines.append(build_orchestration_guidance())
 
     return "\n".join(lines) if lines else ""
 

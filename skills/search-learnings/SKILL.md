@@ -1,6 +1,6 @@
 ---
 name: search-learnings
-description: Full-text search across the knowledge ledger. Use when you need to find specific learnings, search for patterns related to a topic, or discover what was learned about a particular area. Triggers on "search learnings", "find knowledge about", "what do we know about", or "search for".
+description: Full-text search across the knowledge ledger. Use when you need to find specific learnings, search for patterns related to a topic, or discover what was learned about a particular area. Triggers on "search learnings for", "find in ledger", "what do we know about". **Complexity indicator**: Fast full-text search with BM25 ranking. For deep analysis with ranking, contextualization, and cross-referencing multiple learnings, use the `knowledge-retriever` agent instead.
 allowed-tools: Bash, Read
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: session-continuity
-description: Manages session transitions and work-in-progress state. Use this agent when starting a new session on existing work, when the user says "what was I working on", "resume my work", "continue from last session", or when context is about to be compacted. Ensures smooth handoff between sessions.
+description: Manages session transitions and work-in-progress state. Use this agent when starting a new session on existing work, when the user says "what was I working on", "resume my work", "continue from last session", or when context is about to be compacted. Ensures smooth handoff between sessions. **Orchestration hint**: Deploy for full context restoration requiring analysis of handoffs, learnings, and git state. For quick handoff save/load operations, use the `handoff-management` skill instead.
 tools: Bash, Read, Write
 model: opus
 ---

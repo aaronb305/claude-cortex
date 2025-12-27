@@ -132,6 +132,58 @@ project/.claude/
 └── install.sh                 # Installation script
 ```
 
+## Orchestration Patterns
+
+### The Main Claude Instance as Orchestrator
+
+When working on tasks, the main Claude instance should:
+1. **Assess complexity** - How many steps? How much context needed?
+2. **Choose tool type** - Agent for complex, Skill for quick
+3. **Track progress** - Use TodoWrite continuously
+4. **Deploy resources** - Launch agents/skills as needed
+
+### Task Complexity Assessment
+
+| Complexity | Indicators | Action |
+|------------|------------|--------|
+| LOW | Single file, quick lookup, direct query | Use SKILL directly |
+| MEDIUM | 2-3 steps, known pattern, focused scope | Consider SKILL or AGENT |
+| HIGH | Multi-step, research needed, context-dependent | Deploy AGENT |
+
+### Agent vs Skill Decision Tree
+
+```
+Is this a multi-step workflow requiring analysis?
+├─ YES → Deploy AGENT (e.g., knowledge-retriever, continuous-runner)
+└─ NO → Is it a quick lookup or direct operation?
+    ├─ YES → Use SKILL (e.g., ledger-knowledge, search-learnings)
+    └─ NO → Assess complexity, default to AGENT for unknowns
+```
+
+### Recommended Workflows
+
+#### Feature Development
+1. `search-learnings` skill → quick check for prior work
+2. `knowledge-retriever` agent → deep pattern analysis (if complex)
+3. Work on implementation with continuous todo updates
+4. `learning-capture` skill → tag insights as you go
+5. `outcome-tracker` agent → record what worked/failed
+
+#### Quick Research
+1. `search-learnings` skill → find specific knowledge
+2. `ledger-knowledge` skill → get learning details
+3. Direct response to user (no agent needed)
+
+#### Session Resume
+1. SessionStart hook auto-loads handoff and learnings
+2. `session-continuity` agent → if full restoration needed
+3. OR `handoff-management` skill → just load/display handoff
+
+#### Long-Running Tasks
+1. `continuous-runner` agent → for autonomous multi-iteration work
+2. OR direct work with continuous TodoWrite updates
+3. `learning-extractor` agent → extract insights at end
+
 ## Commands
 
 - Install deps: `uv sync`

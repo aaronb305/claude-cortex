@@ -1,6 +1,6 @@
 ---
 name: knowledge-retriever
-description: Searches and retrieves relevant knowledge from the blockchain ledger. Use this agent when you need to find prior learnings, patterns, or decisions that might be relevant to the current task. Triggers on questions about "what did we learn", "previous patterns", "prior knowledge", or when starting work on a familiar codebase.
+description: Searches and retrieves relevant knowledge from the blockchain ledger. Use this agent when you need to find prior learnings, patterns, or decisions that might be relevant to the current task. Triggers on questions about "what did we learn", "previous patterns", "prior knowledge", or when starting work on a familiar codebase. **Orchestration hint**: Deploy for deep analysis across multiple learnings with ranking and contextualization. For simple lookups, use the `ledger-knowledge` or `search-learnings` skills instead.
 tools: Bash, Read, Grep
 model: opus
 ---

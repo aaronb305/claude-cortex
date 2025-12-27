@@ -1,6 +1,6 @@
 ---
 name: learning-capture
-description: Capture and persist learnings to the blockchain ledger. Use when discovering important insights, making significant decisions, encountering errors worth remembering, or identifying reusable patterns. Essential for building persistent memory across sessions.
+description: Capture and persist learnings to the blockchain ledger. Use when discovering important insights, making significant decisions, encountering errors worth remembering, or identifying reusable patterns. Essential for building persistent memory across sessions. **Complexity indicator**: Direct tagging operation for explicit learning capture. For automatic extraction from conversations, use the `learning-extractor` agent instead.
 allowed-tools: Bash, Write, Read
 ---
 

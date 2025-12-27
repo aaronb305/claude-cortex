@@ -1,6 +1,6 @@
 ---
 name: outcome-tracker
-description: Tracks and records outcomes for learnings to improve confidence scores. Use this agent when a learning has been applied (successfully or not), when reviewing which learnings helped, or when the user asks about "update confidence", "record outcome", "this worked", or "this didn't work". Proactively suggest recording outcomes after learnings are applied.
+description: Tracks and records outcomes for learnings to improve confidence scores. Use this agent when a learning has been applied (successfully or not), when reviewing which learnings helped, or when the user asks about "update confidence", "record outcome", "this worked", or "this didn't work". Proactively suggest recording outcomes after learnings are applied. **Orchestration hint**: Deploy when learnings were referenced and outcomes are known. Watch for phrases like "that worked", "this failed", "following the pattern helped". For quick single-outcome recording, use CLI directly.
 tools: Bash, Read, Grep
 model: opus
 ---

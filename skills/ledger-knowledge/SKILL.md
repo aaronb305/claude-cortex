@@ -1,6 +1,6 @@
 ---
 name: ledger-knowledge
-description: Access and query the blockchain-style knowledge ledger. Use when needing to recall prior learnings, check what patterns were discovered, or find relevant knowledge from previous sessions. Triggers on "what did we learn", "previous insights", "check the ledger", or when starting work on a familiar codebase.
+description: Access and query the blockchain-style knowledge ledger. Use when needing to recall prior learnings, check what patterns were discovered, or find relevant knowledge from previous sessions. Triggers on "list learnings", "show learning", "quick lookup", "check the ledger". **Complexity indicator**: Quick, focused operation for direct ledger queries. For deep analysis across multiple learnings with ranking and contextualization, use the `knowledge-retriever` agent instead.
 allowed-tools: Bash, Read
 ---
 

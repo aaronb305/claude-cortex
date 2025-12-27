@@ -1,6 +1,6 @@
 ---
 name: continuous-execution
-description: Run Claude in continuous autonomous mode with automatic learning extraction. Use when you need to run multiple iterations on a task, want uninterrupted progress on complex work, or the user says "run continuously", "keep working", "autonomous mode", or "iterate until done".
+description: Run Claude in continuous autonomous mode with automatic learning extraction. Use when you need to run multiple iterations on a task via CLI, want uninterrupted progress on complex work, or the user says "run cclaude", "use the runner CLI", or "start continuous mode". **Complexity indicator**: CLI wrapper for the continuous execution loop. For full autonomous orchestration with agent-level decision making and multi-step workflows, use the `continuous-runner` agent instead.
 allowed-tools: Bash, Read, Write
 ---
 
