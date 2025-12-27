@@ -282,12 +282,14 @@ def build_orchestration_guidance() -> str:
 
 You are the **orchestrator** for this session. Your role is to coordinate work by deploying specialized agents in parallel, not to do everything yourself.
 
-### CRITICAL: Deploy Agents for Complex Work
+### CRITICAL: Deploy Agents and Continue Working
 
 For HIGH complexity tasks (multi-step, research-heavy, parallelizable):
 → You **MUST** deploy agents rather than handling directly
 → Deploy **multiple agents in parallel** when tasks are independent
-→ This enables efficient parallel execution and specialized processing
+→ **After agents complete, IMMEDIATELY continue** with next steps
+→ Do NOT stop for confirmation after collecting agent results
+→ Keep working until the entire plan is complete or you are truly blocked
 
 ### Task Complexity Assessment
 | Complexity | Indicators | Action |
