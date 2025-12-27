@@ -33,6 +33,17 @@ Just use Claude as usual - hooks automatically:
 
 All agents use **opus** as the default model.
 
+**Execution Agents** (deploy for focused work):
+| Agent | Trigger |
+|-------|---------|
+| `code-implementer` | "implement this", "write code for" |
+| `test-writer` | "write tests for", "add test coverage" |
+| `research-agent` | "research how to", "investigate options" |
+| `refactorer` | "refactor this", "clean up the code" |
+| `bug-investigator` | "debug this", "why is this failing" |
+| `doc-writer` | "document this", "update README" |
+
+**Coordination Agents** (deploy for workflows):
 | Agent | Trigger |
 |-------|---------|
 | `continuous-runner` | "keep working", "run continuously" |
@@ -120,7 +131,7 @@ project/.claude/
 
 ~/projects/continuous-claude-custom/
 ├── .claude-plugin/            # Plugin manifest
-├── agents/                    # Custom agents (5)
+├── agents/                    # Custom agents (11 total)
 ├── skills/                    # Skills (5)
 ├── hooks/                     # Hook scripts
 ├── src/continuous_claude/     # Python package
@@ -154,20 +165,35 @@ When working on tasks, the main Claude instance should:
 
 ```
 Is this a multi-step workflow requiring analysis?
-├─ YES → Deploy AGENT (e.g., knowledge-retriever, continuous-runner)
+├─ YES → Deploy AGENT(s) in parallel when possible
+│        ├─ code-implementer, test-writer (can run together)
+│        ├─ research-agent (independent)
+│        └─ continuous-runner (for coordination)
 └─ NO → Is it a quick lookup or direct operation?
     ├─ YES → Use SKILL (e.g., ledger-knowledge, search-learnings)
     └─ NO → Assess complexity, default to AGENT for unknowns
 ```
 
+### Parallel Execution Pattern
+
+Deploy multiple agents simultaneously for independent tasks:
+```
+Example: "Implement feature X with tests"
+├─ Deploy code-implementer → writes the feature
+├─ Deploy test-writer → writes tests (parallel)
+├─ Deploy research-agent → checks patterns (parallel)
+└─ Collect results and synthesize next steps
+```
+
 ### Recommended Workflows
 
-#### Feature Development
-1. `search-learnings` skill → quick check for prior work
-2. `knowledge-retriever` agent → deep pattern analysis (if complex)
-3. Work on implementation with continuous todo updates
-4. `learning-capture` skill → tag insights as you go
-5. `outcome-tracker` agent → record what worked/failed
+#### Feature Development (Parallel Agents)
+1. `research-agent` → check existing patterns (parallel)
+2. `code-implementer` → implement feature (parallel)
+3. `test-writer` → write tests (parallel)
+4. Collect results, integrate
+5. `doc-writer` → update documentation
+6. `outcome-tracker` → record what worked
 
 #### Quick Research
 1. `search-learnings` skill → find specific knowledge

@@ -278,46 +278,60 @@ def detect_project_type(project_dir: Path) -> dict:
 
 def build_orchestration_guidance() -> str:
     """Build orchestration guidance for the main Claude instance."""
-    return """## Orchestration Mode
+    return """## Orchestration Mode - ACTIVE
 
-You are the orchestrator for a continuous-claude session. Use this decision matrix:
+You are the **orchestrator** for this session. Your role is to coordinate work by deploying specialized agents in parallel, not to do everything yourself.
+
+### CRITICAL: Deploy Agents for Complex Work
+
+For HIGH complexity tasks (multi-step, research-heavy, parallelizable):
+→ You **MUST** deploy agents rather than handling directly
+→ Deploy **multiple agents in parallel** when tasks are independent
+→ This enables efficient parallel execution and specialized processing
 
 ### Task Complexity Assessment
 | Complexity | Indicators | Action |
 |------------|------------|--------|
 | LOW | Single file, quick lookup, direct query | Use SKILL directly |
 | MEDIUM | 2-3 steps, known pattern, focused scope | Consider SKILL or AGENT |
-| HIGH | Multi-step, research needed, context-dependent | Deploy AGENT |
+| HIGH | Multi-step, research needed, parallelizable | **DEPLOY AGENT(S)** |
 
-### Agent vs Skill Decision Tree
+### Parallel Execution Pattern
+When you identify independent subtasks, deploy multiple agents simultaneously:
 ```
-Is this a multi-step workflow requiring analysis?
-├─ YES → Deploy AGENT (e.g., knowledge-retriever, continuous-runner)
-└─ NO → Is it a quick lookup or direct operation?
-    ├─ YES → Use SKILL (e.g., ledger-knowledge, search-learnings)
-    └─ NO → Assess complexity, default to AGENT for unknowns
+Example: "Implement feature X with tests"
+├─ Deploy code-implementer agent → writes the feature
+├─ Deploy test-writer agent → writes tests (parallel)
+├─ Deploy research-agent → checks patterns (parallel)
+└─ Orchestrator collects results and synthesizes
 ```
+
+### Available Specialized Agents
+**Execution agents** (deploy for focused work):
+- `code-implementer` - Writes/modifies code for specific tasks
+- `test-writer` - Creates tests for implementations
+- `research-agent` - Investigates APIs, libraries, patterns
+- `refactorer` - Handles code refactoring tasks
+- `bug-investigator` - Debugs and traces issues
+- `doc-writer` - Writes/updates documentation
+
+**Coordination agents** (deploy for workflows):
+- `continuous-runner` - Coordinates multi-iteration sessions
+- `knowledge-retriever` - Deep search and analysis of learnings
+- `session-continuity` - Full session restoration
+- `learning-extractor` - Analyze conversations for insights
+- `outcome-tracker` - Record outcomes, adjust confidence
+
+### Skills (quick operations only)
+- `ledger-knowledge` - Direct ledger queries
+- `learning-capture` - Tag and save learnings
+- `handoff-management` - Save/load WIP state
+- `search-learnings` - Full-text search
 
 ### Continuous Todo Management
 - **Always** use TodoWrite when starting multi-step work
 - **Immediately** mark tasks complete as you finish them
 - **Never** batch completions - update in real-time
-- **Add** new tasks discovered during work
-
-### Available Resources
-**Agents** (complex workflows):
-- `continuous-runner` - Autonomous multi-iteration sessions
-- `knowledge-retriever` - Deep search and analysis of learnings
-- `learning-extractor` - Analyze conversations for insights
-- `session-continuity` - Full session restoration
-- `outcome-tracker` - Record outcomes, adjust confidence
-
-**Skills** (quick operations):
-- `ledger-knowledge` - Direct ledger queries
-- `learning-capture` - Tag and save learnings
-- `handoff-management` - Save/load WIP state
-- `search-learnings` - Full-text search
-- `continuous-execution` - CLI runner wrapper
 """
 
 

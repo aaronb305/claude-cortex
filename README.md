@@ -110,9 +110,22 @@ uv run cclaude handoff list
 
 All agents use **opus** as the default model for maximum capability.
 
+**Execution Agents** (deploy for focused, parallelizable work):
+
 | Agent | Trigger | Purpose |
 |-------|---------|---------|
-| `continuous-runner` | "keep working", "run continuously" | Orchestrate autonomous multi-iteration sessions |
+| `code-implementer` | "implement this", "write code for" | Write/modify code for specific tasks |
+| `test-writer` | "write tests for", "add test coverage" | Create tests (can run parallel with implementation) |
+| `research-agent` | "research how to", "investigate options" | Investigate APIs, libraries, patterns |
+| `refactorer` | "refactor this", "clean up the code" | Restructure code while preserving behavior |
+| `bug-investigator` | "debug this", "why is this failing" | Debug and trace issues to find root causes |
+| `doc-writer` | "document this", "update README" | Write/update documentation |
+
+**Coordination Agents** (deploy for multi-step workflows):
+
+| Agent | Trigger | Purpose |
+|-------|---------|---------|
+| `continuous-runner` | "keep working", "run continuously" | Coordinate autonomous multi-iteration sessions |
 | `knowledge-retriever` | "what did we learn", "previous patterns" | Search and surface relevant learnings |
 | `learning-extractor` | "extract learnings", end of session | Analyze and categorize insights |
 | `session-continuity` | "resume my work", "what was I working on" | Manage session transitions and handoffs |
@@ -154,7 +167,7 @@ project/.claude/
 
 ~/projects/continuous-claude-custom/
 ├── .claude-plugin/plugin.json # Plugin manifest
-├── agents/                    # Custom agents (opus model)
+├── agents/                    # Custom agents (11 total, opus model)
 │   ├── continuous-runner.md   # Autonomous iteration manager
 │   ├── knowledge-retriever.md # Ledger search specialist
 │   ├── learning-extractor.md  # Insight extraction specialist
