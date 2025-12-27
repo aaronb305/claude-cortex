@@ -1,0 +1,17 @@
+{
+  "name": "continuous-claude-custom",
+  "version": "0.1.0",
+  "description": "Blockchain-style ledger memory with performance-based reinforcement for Claude Code",
+  "owner": {
+    "name": "Aaron"
+  },
+  "plugins": [
+    {
+      "name": "continuous-claude",
+      "version": "0.1.0",
+      "description": "Blockchain-style ledger memory with performance-based reinforcement. Provides persistent knowledge across sessions, continuous iteration mode, and learning extraction.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
