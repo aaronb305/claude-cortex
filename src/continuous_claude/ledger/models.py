@@ -2,12 +2,35 @@
 
 import hashlib
 import json
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, computed_field
+
+
+def compute_content_hash(content: str) -> str:
+    """Compute a normalized content hash for deduplication.
+
+    Normalizes the content by:
+    - Converting to lowercase
+    - Stripping leading/trailing whitespace
+    - Normalizing internal whitespace (multiple spaces/newlines become single space)
+
+    Args:
+        content: The content string to hash
+
+    Returns:
+        First 16 characters of the SHA-256 hash
+    """
+    # Normalize: lowercase, strip, collapse whitespace
+    normalized = content.lower().strip()
+    normalized = re.sub(r'\s+', ' ', normalized)
+
+    # Compute SHA-256 and return first 16 chars
+    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
 
 class LearningCategory(str, Enum):
@@ -30,7 +53,7 @@ class OutcomeResult(str, Enum):
 class Outcome(BaseModel):
     """Records the result of applying a piece of knowledge."""
 
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     result: OutcomeResult
     context: str = Field(description="Description of how the knowledge was applied")
     delta: float = Field(
@@ -40,12 +63,33 @@ class Outcome(BaseModel):
     )
 
 
+class ProjectContext(BaseModel):
+    """Context about the project where a learning originated."""
+
+    project_type: Optional[str] = Field(
+        default=None,
+        description="Type of project (python, node, rust, go, etc.)"
+    )
+    tech_stack: list[str] = Field(
+        default_factory=list,
+        description="Technologies/frameworks used (fastapi, react, pytest, etc.)"
+    )
+    keywords: list[str] = Field(
+        default_factory=list,
+        description="Keywords extracted from the learning content"
+    )
+
+
 class Learning(BaseModel):
     """A single piece of knowledge extracted from a session."""
 
     id: str = Field(default_factory=lambda: str(uuid4()))
     category: LearningCategory
     content: str = Field(description="The actual knowledge/insight")
+    content_hash: Optional[str] = Field(
+        default=None,
+        description="Normalized content hash for deduplication (computed automatically)"
+    )
     confidence: float = Field(
         default=0.5,
         description="Current confidence level (0.0 to 1.0)",
@@ -60,6 +104,42 @@ class Learning(BaseModel):
         default_factory=list,
         description="History of applications and their results"
     )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Timestamp when this learning was created"
+    )
+    last_applied: Optional[datetime] = Field(
+        default=None,
+        description="Timestamp when this learning was last referenced/applied"
+    )
+    project_context: Optional[ProjectContext] = Field(
+        default=None,
+        description="Context about the project where this learning originated"
+    )
+    derived_from: Optional[str] = Field(
+        default=None,
+        description="ID of the learning this was derived/imported from"
+    )
+
+    def model_post_init(self, __context) -> None:
+        """Compute content_hash after model initialization if not provided."""
+        if self.content_hash is None:
+            object.__setattr__(self, 'content_hash', compute_content_hash(self.content))
+
+    def hash_dict(self) -> dict:
+        """Return only the original fields used for block hash computation.
+
+        This ensures backwards compatibility with existing blocks that were
+        created before new fields (content_hash, created_at, etc.) were added.
+        """
+        return {
+            "id": self.id,
+            "category": self.category.value,
+            "content": self.content,
+            "confidence": self.confidence,
+            "source": self.source,
+            "outcomes": [o.model_dump(mode="json") for o in self.outcomes],
+        }
 
     def apply_outcome(self, result: OutcomeResult, context: str) -> None:
         """Record an outcome and adjust confidence based on result."""
@@ -76,12 +156,15 @@ class Learning(BaseModel):
         # Apply confidence adjustment with bounds
         self.confidence = max(0.0, min(1.0, self.confidence + delta))
 
+        # Update last_applied timestamp
+        self.last_applied = datetime.now(timezone.utc)
+
 
 class Block(BaseModel):
     """An immutable block in the ledger chain."""
 
     id: str = Field(default_factory=lambda: str(uuid4())[:8])
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     session_id: str = Field(description="ID of the Claude session that created this block")
     parent_block: Optional[str] = Field(
         default=None,
@@ -95,13 +178,17 @@ class Block(BaseModel):
     @computed_field
     @property
     def hash(self) -> str:
-        """Compute SHA-256 hash of the block contents."""
+        """Compute SHA-256 hash of the block contents.
+
+        Uses only the original fields for backwards compatibility with
+        existing blocks created before new Learning fields were added.
+        """
         content = {
             "id": self.id,
             "timestamp": self.timestamp.isoformat(),
             "session_id": self.session_id,
             "parent_block": self.parent_block,
-            "learnings": [l.model_dump(mode="json") for l in self.learnings],
+            "learnings": [l.hash_dict() for l in self.learnings],
         }
         content_str = json.dumps(content, sort_keys=True)
         return hashlib.sha256(content_str.encode()).hexdigest()

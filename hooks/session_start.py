@@ -5,183 +5,23 @@ SessionStart hook for continuous-claude-custom.
 Injects ledger context into Claude sessions by reading high-confidence
 learnings from both global and project ledgers.
 
-Also loads and displays the latest handoff if available.
+Also loads and displays the latest handoff and recent summaries if available.
 """
 
 import json
-import re
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-
-def get_ledger_path(project_dir: Optional[str], is_global: bool = False) -> Path:
-    """Get the path to a ledger directory."""
-    if is_global:
-        return Path.home() / ".claude" / "ledger"
-    elif project_dir:
-        return Path(project_dir) / ".claude" / "ledger"
-    else:
-        return Path.cwd() / ".claude" / "ledger"
-
-
-def read_json(path: Path) -> dict:
-    """Read JSON from a file."""
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-
-def get_learnings_by_confidence(
-    ledger_path: Path,
-    min_confidence: float = 0.5,
-    limit: int = 15,
-) -> list[dict]:
-    """Get learnings sorted by confidence."""
-    reinforcements_file = ledger_path / "reinforcements.json"
-    reinforcements = read_json(reinforcements_file)
-    learnings = reinforcements.get("learnings", {})
-
-    results = []
-    for learning_id, data in learnings.items():
-        if data.get("confidence", 0) >= min_confidence:
-            results.append({
-                "id": learning_id,
-                **data,
-            })
-
-    results.sort(key=lambda x: x.get("confidence", 0), reverse=True)
-    return results[:limit]
-
-
-def get_learning_content(ledger_path: Path, learning_id: str) -> Optional[str]:
-    """Get the actual content of a learning from blocks."""
-    blocks_dir = ledger_path / "blocks"
-    if not blocks_dir.exists():
-        return None
-
-    for block_file in blocks_dir.glob("*.json"):
-        try:
-            block = read_json(block_file)
-            for learning in block.get("learnings", []):
-                if learning.get("id") == learning_id:
-                    return learning.get("content")
-        except Exception:
-            continue
-
-    return None
-
-
-def load_latest_handoff(project_dir: Path) -> Optional[dict]:
-    """Load the most recent handoff for display.
-
-    Args:
-        project_dir: The project directory.
-
-    Returns:
-        Handoff data as a dict, or None if not found.
-    """
-    handoffs_dir = project_dir / ".claude" / "handoffs"
-    if not handoffs_dir.exists():
-        return None
-
-    # Find all handoff files across all sessions
-    handoff_files = list(handoffs_dir.glob("*/handoff-*.md"))
-    if not handoff_files:
-        return None
-
-    # Sort by filename (contains timestamp) to get most recent
-    handoff_files.sort(key=lambda p: p.name, reverse=True)
-
-    # Try to parse the most recent handoff
-    for handoff_file in handoff_files:
-        try:
-            content = handoff_file.read_text(encoding="utf-8")
-            handoff = parse_handoff_markdown(content)
-            if handoff:
-                return handoff
-        except Exception:
-            continue
-
-    return None
-
-
-def parse_handoff_markdown(content: str) -> Optional[dict]:
-    """Parse a handoff from markdown format.
-
-    Args:
-        content: The markdown content to parse.
-
-    Returns:
-        Handoff data as a dict, or None if parsing fails.
-    """
-    if not content or not content.strip():
-        return None
-
-    try:
-        # Parse YAML frontmatter
-        frontmatter_match = re.match(
-            r"^---\s*\n(.*?)\n---\s*\n",
-            content,
-            re.DOTALL
-        )
-        if not frontmatter_match:
-            return None
-
-        frontmatter = frontmatter_match.group(1)
-        body = content[frontmatter_match.end():]
-
-        # Extract session_id and timestamp from frontmatter
-        session_id_match = re.search(r"session_id:\s*(.+)", frontmatter)
-        timestamp_match = re.search(r"timestamp:\s*(.+)", frontmatter)
-
-        if not session_id_match or not timestamp_match:
-            return None
-
-        session_id = session_id_match.group(1).strip()
-        timestamp_str = timestamp_match.group(1).strip()
-
-        # Parse sections from body
-        def parse_list_section(section_name: str) -> list[str]:
-            pattern = rf"##\s*{re.escape(section_name)}\s*\n(.*?)(?=\n##|\Z)"
-            match = re.search(pattern, body, re.DOTALL | re.IGNORECASE)
-            if not match:
-                return []
-            section_content = match.group(1)
-            items = []
-            for line in section_content.strip().split("\n"):
-                line = line.strip()
-                if line.startswith("- "):
-                    item = line[2:].strip()
-                    if item.lower() != "none":
-                        items.append(item)
-            return items
-
-        def parse_context_section() -> str:
-            pattern = r"##\s*Context\s*\n(.*?)(?=\n##|\Z)"
-            match = re.search(pattern, body, re.DOTALL | re.IGNORECASE)
-            if not match:
-                return ""
-            context = match.group(1).strip()
-            if context.lower() == "no additional context.":
-                return ""
-            return context
-
-        return {
-            "session_id": session_id,
-            "timestamp": timestamp_str,
-            "completed_tasks": parse_list_section("Completed"),
-            "pending_tasks": parse_list_section("Pending"),
-            "modified_files": parse_list_section("Modified Files"),
-            "blockers": parse_list_section("Blockers"),
-            "context_notes": parse_context_section(),
-        }
-
-    except Exception:
-        return None
+# Import shared utilities
+from shared import (
+    get_ledger_path,
+    read_json,
+    load_latest_handoff,
+    get_learnings_by_confidence,
+    get_learning_content,
+    detect_project_type,
+)
 
 
 def format_handoff_context(handoff: dict) -> str:
@@ -235,45 +75,154 @@ def format_handoff_context(handoff: dict) -> str:
     return "\n".join(lines)
 
 
-def detect_project_type(project_dir: Path) -> dict:
-    """Detect project type and package manager."""
-    result = {"type": "unknown", "package_manager": None, "commands": {}}
+def load_recent_summaries(project_dir: Path, limit: int = 3) -> list[dict]:
+    """Load recent summaries for context injection.
 
-    pyproject = project_dir / "pyproject.toml"
-    if pyproject.exists():
-        result["type"] = "python"
-        result["package_manager"] = "uv"
-        result["commands"] = {
-            "install": "uv sync",
-            "run": "uv run python",
-            "test": "uv run pytest",
-            "add_dep": "uv add",
-        }
-        return result
+    Args:
+        project_dir: The project directory.
+        limit: Maximum number of summaries to load.
 
-    package_json = project_dir / "package.json"
-    if package_json.exists():
-        if (project_dir / "bun.lockb").exists():
-            result["type"] = "node"
-            result["package_manager"] = "bun"
-            result["commands"] = {
-                "install": "bun install",
-                "run": "bun run",
-                "test": "bun test",
-                "add_dep": "bun add",
-            }
-        else:
-            result["type"] = "node"
-            result["package_manager"] = "npm"
-            result["commands"] = {
-                "install": "npm install",
-                "run": "npm run",
-                "test": "npm test",
-                "add_dep": "npm install",
-            }
-        return result
+    Returns:
+        List of summary data dictionaries.
+    """
+    summaries_dir = project_dir / ".claude" / "summaries"
+    if not summaries_dir.exists():
+        return []
 
-    return result
+    # Find all summary files across all sessions
+    summary_files = list(summaries_dir.glob("*/summary-*.json"))
+    if not summary_files:
+        return []
+
+    # Sort by filename (contains timestamp) to get most recent
+    summary_files.sort(key=lambda p: p.name, reverse=True)
+
+    results = []
+    for summary_file in summary_files[:limit]:
+        try:
+            data = read_json(summary_file)
+            if data:
+                results.append(data)
+        except Exception:
+            continue
+
+    return results
+
+
+def format_summaries_context(summaries: list[dict]) -> str:
+    """Format summaries for session context injection.
+
+    Args:
+        summaries: List of summary data dictionaries.
+
+    Returns:
+        Formatted context string.
+    """
+    if not summaries:
+        return ""
+
+    lines = ["## Recent Session Summaries"]
+    lines.append("")
+
+    for summary in summaries:
+        session_id = summary.get("session_id", "unknown")
+        timestamp = summary.get("timestamp", "unknown")
+        summary_text = summary.get("summary_text", "")
+        key_decisions = summary.get("key_decisions", [])
+        files_discussed = summary.get("files_discussed", [])
+
+        lines.append(f"### Session {session_id[:8]}")
+        lines.append(f"*{timestamp[:19]}*")
+        lines.append("")
+
+        if summary_text:
+            # Truncate if too long
+            if len(summary_text) > 500:
+                lines.append(summary_text[:500] + "...")
+            else:
+                lines.append(summary_text)
+            lines.append("")
+
+        if key_decisions:
+            lines.append("**Key Decisions:**")
+            for decision in key_decisions[:5]:
+                lines.append(f"- {decision}")
+            lines.append("")
+
+        if files_discussed:
+            lines.append("**Files Involved:**")
+            for file_path in files_discussed[:10]:
+                lines.append(f"- {file_path}")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+def get_cross_project_suggestions(project_dir: Path, limit: int = 3) -> str:
+    """Get relevant suggestions from global ledger for the current project.
+
+    Uses the LearningRecommender to find learnings that match the
+    current project's type and tech stack.
+
+    Args:
+        project_dir: The project directory to analyze.
+        limit: Maximum number of suggestions.
+
+    Returns:
+        Formatted string with suggestions, or empty string if none.
+    """
+    try:
+        # Import here to avoid circular dependencies
+        src_path = Path(__file__).parent.parent / "src"
+        if str(src_path) not in sys.path:
+            sys.path.insert(0, str(src_path))
+
+        from continuous_claude.suggestions import LearningRecommender
+        from continuous_claude.ledger import Ledger
+
+        global_ledger_path = Path.home() / ".claude" / "ledger"
+        if not global_ledger_path.exists():
+            return ""
+
+        global_ledger = Ledger(global_ledger_path, is_global=True)
+        recommender = LearningRecommender(global_ledger)
+
+        # Get top suggestions
+        suggestions = recommender.get_suggestions(
+            project_dir,
+            limit=limit,
+            min_confidence=0.5,
+        )
+
+        if not suggestions:
+            return ""
+
+        lines = ["## Suggested from Global Knowledge"]
+        lines.append("")
+
+        for i, suggestion in enumerate(suggestions, 1):
+            learning = suggestion.learning
+            summary = suggestion.format_summary(max_length=150)
+            category = learning.category.value
+            confidence = int(learning.confidence * 100)
+            relevance = int(suggestion.relevance_score * 100)
+
+            lines.append(f"{i}. [{category}] ({confidence}% conf, {relevance}% match): {summary}")
+
+            # Show match reasons briefly
+            if suggestion.match_reasons:
+                reasons = ", ".join(suggestion.match_reasons[:2])
+                lines.append(f"   *Matched: {reasons}*")
+
+        lines.append("")
+        lines.append("*Use `cclaude suggest --apply <id>` to import to project ledger*")
+        lines.append("")
+
+        return "\n".join(lines)
+
+    except Exception:
+        # Don't fail hook if suggestion system has issues
+        return ""
 
 
 def build_orchestration_guidance() -> str:
@@ -285,11 +234,11 @@ You are the **orchestrator** for this session. Your role is to coordinate work b
 ### CRITICAL: Deploy Agents and Continue Working
 
 For HIGH complexity tasks (multi-step, research-heavy, parallelizable):
-→ You **MUST** deploy agents rather than handling directly
-→ Deploy **multiple agents in parallel** when tasks are independent
-→ **After agents complete, IMMEDIATELY continue** with next steps
-→ Do NOT stop for confirmation after collecting agent results
-→ Keep working until the entire plan is complete or you are truly blocked
+-> You **MUST** deploy agents rather than handling directly
+-> Deploy **multiple agents in parallel** when tasks are independent
+-> **After agents complete, IMMEDIATELY continue** with next steps
+-> Do NOT stop for confirmation after collecting agent results
+-> Keep working until the entire plan is complete or you are truly blocked
 
 ### Task Complexity Assessment
 | Complexity | Indicators | Action |
@@ -302,10 +251,10 @@ For HIGH complexity tasks (multi-step, research-heavy, parallelizable):
 When you identify independent subtasks, deploy multiple agents simultaneously:
 ```
 Example: "Implement feature X with tests"
-├─ Deploy code-implementer agent → writes the feature
-├─ Deploy test-writer agent → writes tests (parallel)
-├─ Deploy research-agent → checks patterns (parallel)
-└─ Orchestrator collects results and synthesizes
+|- Deploy code-implementer agent -> writes the feature
+|- Deploy test-writer agent -> writes tests (parallel)
+|- Deploy research-agent -> checks patterns (parallel)
+|- Orchestrator collects results and synthesizes
 ```
 
 ### Available Specialized Agents
@@ -338,7 +287,7 @@ Example: "Implement feature X with tests"
 
 
 def build_context(project_dir: Optional[Path]) -> str:
-    """Build context string from ledgers, handoffs, and project info."""
+    """Build context string from ledgers, handoffs, summaries, and project info."""
     lines = []
 
     # Load and display latest handoff if available
@@ -347,6 +296,13 @@ def build_context(project_dir: Optional[Path]) -> str:
         if handoff:
             handoff_context = format_handoff_context(handoff)
             lines.append(handoff_context)
+
+    # Load and display recent summaries if available
+    if project_dir and project_dir.exists():
+        summaries = load_recent_summaries(project_dir, limit=3)
+        if summaries:
+            summaries_context = format_summaries_context(summaries)
+            lines.append(summaries_context)
 
     # Project environment context
     if project_dir and project_dir.exists():
@@ -387,6 +343,12 @@ def build_context(project_dir: Optional[Path]) -> str:
                         cat = l.get("category", "unknown")
                         lines.append(f"- [{cat}] ({conf}%): {content[:200]}")
                 lines.append("")
+
+    # Cross-project suggestions from global ledger
+    if project_dir and project_dir.exists():
+        suggestions = get_cross_project_suggestions(project_dir, limit=3)
+        if suggestions:
+            lines.append(suggestions)
 
     # Add learning extraction instructions
     if lines:

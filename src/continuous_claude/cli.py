@@ -15,6 +15,8 @@ from .runner import Runner, IterationLimit, CostLimit, NoNewLearnings
 from .runner.stop_conditions import TimeLimit, CompositeStopCondition
 from .search import SearchIndex
 from .handoff import Handoff, HandoffManager
+from .summaries import Summary, SummaryManager
+from .suggestions import LearningRecommender
 
 
 console = Console()
@@ -139,11 +141,18 @@ def run(
     default=20,
     help="Maximum results to show",
 )
+@click.option(
+    "--show-decay", "-d",
+    is_flag=True,
+    default=False,
+    help="Show both stored and effective (decayed) confidence",
+)
 def list_learnings(
     project: Optional[Path],
     min_confidence: float,
     category: Optional[str],
     limit: int,
+    show_decay: bool,
 ):
     """List learnings from the ledger."""
     if project:
@@ -167,17 +176,32 @@ def list_learnings(
     table = Table(title=f"Learnings ({len(learnings)})")
     table.add_column("ID", style="dim")
     table.add_column("Category", style="cyan")
-    table.add_column("Confidence", style="green")
+    if show_decay:
+        table.add_column("Stored", style="green")
+        table.add_column("Effective", style="yellow")
+    else:
+        table.add_column("Confidence", style="green")
     table.add_column("Outcomes", style="yellow")
 
     for l in learnings:
-        conf_pct = f"{l['confidence']*100:.0f}%"
-        table.add_row(
-            l["id"][:8],
-            l["category"],
-            conf_pct,
-            str(l.get("outcome_count", 0)),
-        )
+        stored_pct = f"{l['confidence']*100:.0f}%"
+        effective_pct = f"{l.get('effective_confidence', l['confidence'])*100:.0f}%"
+
+        if show_decay:
+            table.add_row(
+                l["id"][:8],
+                l["category"],
+                stored_pct,
+                effective_pct,
+                str(l.get("outcome_count", 0)),
+            )
+        else:
+            table.add_row(
+                l["id"][:8],
+                l["category"],
+                effective_pct,
+                str(l.get("outcome_count", 0)),
+            )
 
     console.print(table)
 
@@ -236,7 +260,11 @@ def outcome(
     context: str,
     project: Optional[Path],
 ):
-    """Record an outcome for a learning (affects confidence)."""
+    """Record an outcome for a learning (affects confidence).
+
+    Outcomes are stored in reinforcements.json to preserve block immutability.
+    Block files are never modified after creation to maintain hash integrity.
+    """
     from .ledger.models import OutcomeResult
 
     if project:
@@ -244,29 +272,15 @@ def outcome(
     else:
         ledger = get_global_ledger()
 
-    # Find the learning
-    found = False
-    for block in ledger.get_all_blocks():
-        for learning in block.learnings:
-            if learning.id.startswith(learning_id):
-                result_enum = OutcomeResult(result)
-                learning.apply_outcome(result_enum, context)
+    # Use record_outcome which stores outcomes in reinforcements.json
+    # instead of modifying block files (preserves hash integrity)
+    result_enum = OutcomeResult(result)
+    success, new_confidence, matched_id = ledger.record_outcome(learning_id, result_enum, context)
 
-                # Update the block file
-                block_file = ledger.blocks_dir / f"{block.id}.json"
-                ledger._write_json(block_file, block.model_dump(mode="json"))
-
-                # Update reinforcements
-                ledger.update_learning_confidence(learning.id, learning.confidence)
-
-                console.print(f"[green]Recorded {result} outcome for learning {learning.id[:8]}[/green]")
-                console.print(f"New confidence: {learning.confidence*100:.0f}%")
-                found = True
-                break
-        if found:
-            break
-
-    if not found:
+    if success:
+        console.print(f"[green]Recorded {result} outcome for learning {matched_id[:8]}[/green]")
+        console.print(f"New confidence: {new_confidence*100:.0f}%")
+    else:
         console.print(f"[red]Learning {learning_id} not found[/red]")
 
 
@@ -306,30 +320,49 @@ def promote(project: Path, threshold: float):
     default=None,
     help="Project directory (default: global)",
 )
-def show(learning_id: str, project: Optional[Path]):
+@click.option(
+    "--show-decay", "-d",
+    is_flag=True,
+    default=False,
+    help="Show both stored and effective (decayed) confidence",
+)
+def show(learning_id: str, project: Optional[Path], show_decay: bool):
     """Show details of a specific learning."""
     if project:
         ledger = get_project_ledger(project.resolve())
     else:
         ledger = get_global_ledger()
 
-    for block in ledger.get_all_blocks():
-        for learning in block.learnings:
-            if learning.id.startswith(learning_id):
-                console.print(f"[bold]ID:[/bold] {learning.id}")
-                console.print(f"[bold]Category:[/bold] {learning.category.value}")
-                console.print(f"[bold]Confidence:[/bold] {learning.confidence*100:.0f}%")
-                console.print(f"[bold]Source:[/bold] {learning.source or 'N/A'}")
-                console.print(f"\n[bold]Content:[/bold]\n{learning.content}")
+    # Find the learning efficiently using the new lookup method
+    learning, block = ledger.get_learning_by_id(learning_id, prefix_match=True)
 
-                if learning.outcomes:
-                    console.print(f"\n[bold]Outcomes ({len(learning.outcomes)}):[/bold]")
-                    for o in learning.outcomes:
-                        console.print(f"  - {o.result.value}: {o.context} (delta: {o.delta:+.2f})")
+    if learning:
+        console.print(f"[bold]ID:[/bold] {learning.id}")
+        console.print(f"[bold]Category:[/bold] {learning.category.value}")
 
-                return
+        if show_decay:
+            effective_conf = ledger.get_effective_confidence(learning.id)
+            console.print(f"[bold]Stored Confidence:[/bold] {learning.confidence*100:.0f}%")
+            console.print(f"[bold]Effective Confidence:[/bold] {effective_conf*100:.0f}%")
+            if learning.last_applied:
+                console.print(f"[bold]Last Applied:[/bold] {learning.last_applied.isoformat()}")
+            if learning.created_at:
+                console.print(f"[bold]Created At:[/bold] {learning.created_at.isoformat()}")
+        else:
+            effective_conf = ledger.get_effective_confidence(learning.id)
+            console.print(f"[bold]Confidence:[/bold] {effective_conf*100:.0f}%")
 
-    console.print(f"[red]Learning {learning_id} not found[/red]")
+        console.print(f"[bold]Source:[/bold] {learning.source or 'N/A'}")
+        console.print(f"\n[bold]Content:[/bold]\n{learning.content}")
+
+        # Get outcomes from reinforcements.json (where they are now stored)
+        outcomes = ledger.get_learning_outcomes(learning.id)
+        if outcomes:
+            console.print(f"\n[bold]Outcomes ({len(outcomes)}):[/bold]")
+            for o in outcomes:
+                console.print(f"  - {o['result']}: {o['context']} (delta: {o['delta']:+.2f})")
+    else:
+        console.print(f"[red]Learning {learning_id} not found[/red]")
 
 
 @main.command()
@@ -373,9 +406,8 @@ def search(
         cache_dir = Path.home() / ".claude" / "cache"
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    index = SearchIndex(cache_dir / "search.db")
 
-    try:
+    with SearchIndex(cache_dir / "search.db") as index:
         if category:
             results = index.search_by_category(query, category, limit=limit)
         else:
@@ -404,9 +436,6 @@ def search(
 
         console.print(table)
 
-    finally:
-        index.close()
-
 
 @main.command()
 @click.option(
@@ -432,9 +461,8 @@ def reindex(project: Optional[Path]):
         console.print("[bold]Reindexing global ledger[/bold]")
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    index = SearchIndex(cache_dir / "search.db")
 
-    try:
+    with SearchIndex(cache_dir / "search.db") as index:
         count = index.reindex_ledger(ledger)
         console.print(f"[green]Successfully indexed {count} learnings[/green]")
 
@@ -444,9 +472,6 @@ def reindex(project: Optional[Path]):
             console.print("\n[bold]By category:[/bold]")
             for cat, cnt in stats["by_category"].items():
                 console.print(f"  - {cat}: {cnt}")
-
-    finally:
-        index.close()
 
 
 @main.group()
@@ -637,6 +662,574 @@ def handoff_list(project: Path, session: Optional[str], limit: int):
         )
 
     console.print(table)
+
+
+@main.group()
+def summary():
+    """Manage session summaries."""
+    pass
+
+
+@summary.command("show")
+@click.argument("session_id", required=False)
+@click.option(
+    "--project", "-p",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory (default: current directory)",
+)
+def summary_show(session_id: Optional[str], project: Path):
+    """Show summary for a session.
+
+    If SESSION_ID is not provided, shows the most recent summary.
+    """
+    project = project.resolve()
+    manager = SummaryManager(project)
+
+    summary_obj = manager.load_latest_summary(session_id=session_id)
+
+    if not summary_obj:
+        console.print("[dim]No summaries found[/dim]")
+        return
+
+    # Display summary in a panel
+    lines = [
+        f"[bold]Session:[/bold] {summary_obj.session_id}",
+        f"[bold]Timestamp:[/bold] {summary_obj.timestamp.isoformat()}",
+        "",
+    ]
+
+    if summary_obj.summary_text:
+        lines.append("[bold cyan]Summary:[/bold cyan]")
+        lines.append(summary_obj.summary_text)
+        lines.append("")
+
+    if summary_obj.key_decisions:
+        lines.append("[bold yellow]Key Decisions:[/bold yellow]")
+        for decision in summary_obj.key_decisions:
+            lines.append(f"  - {decision}")
+        lines.append("")
+
+    if summary_obj.files_discussed:
+        lines.append("[bold]Files Discussed:[/bold]")
+        for fp in summary_obj.files_discussed[:20]:
+            lines.append(f"  - {fp}")
+        if len(summary_obj.files_discussed) > 20:
+            lines.append(f"  ... and {len(summary_obj.files_discussed) - 20} more")
+        lines.append("")
+
+    if summary_obj.learning_ids:
+        lines.append("[bold green]Learnings Captured:[/bold green]")
+        for lid in summary_obj.learning_ids[:10]:
+            lines.append(f"  - {lid[:8]}")
+        if len(summary_obj.learning_ids) > 10:
+            lines.append(f"  ... and {len(summary_obj.learning_ids) - 10} more")
+
+    panel = Panel("\n".join(lines), title="Session Summary", border_style="green")
+    console.print(panel)
+
+
+@summary.command("list")
+@click.option(
+    "--project", "-p",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory (default: current directory)",
+)
+@click.option(
+    "--session", "-s",
+    type=str,
+    default=None,
+    help="Filter by session ID",
+)
+@click.option(
+    "--limit", "-n",
+    type=int,
+    default=20,
+    help="Maximum number of summaries to show (default: 20)",
+)
+def summary_list(project: Path, session: Optional[str], limit: int):
+    """List available summaries."""
+    project = project.resolve()
+    manager = SummaryManager(project)
+
+    summaries = manager.list_summaries(session_id=session, limit=limit)
+
+    if not summaries:
+        console.print("[dim]No summaries found[/dim]")
+        return
+
+    table = Table(title=f"Summaries ({len(summaries)})")
+    table.add_column("Session", style="cyan", width=12)
+    table.add_column("Timestamp", style="dim", width=19)
+    table.add_column("Decisions", style="yellow", width=9)
+    table.add_column("Files", style="blue", width=6)
+    table.add_column("Learnings", style="green", width=9)
+    table.add_column("Preview", style="white")
+
+    for s in summaries:
+        table.add_row(
+            s["session_id"][:12],
+            s["timestamp"][:19],
+            str(s["decisions_count"]),
+            str(s["files_count"]),
+            str(s["learnings_count"]),
+            s["summary_preview"][:50],
+        )
+
+    console.print(table)
+
+
+@main.command()
+@click.option(
+    "--project", "-p",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory (default: current directory)",
+)
+@click.option(
+    "--limit", "-n",
+    type=int,
+    default=10,
+    help="Maximum suggestions to show (default: 10)",
+)
+@click.option(
+    "--min-confidence", "-c",
+    type=float,
+    default=0.5,
+    help="Minimum confidence threshold (default: 0.5)",
+)
+@click.option(
+    "--apply",
+    type=str,
+    default=None,
+    help="Import a suggested learning by ID (prefix match)",
+)
+def suggest(
+    project: Path,
+    limit: int,
+    min_confidence: float,
+    apply: Optional[str],
+):
+    """Show suggested learnings from global ledger for current project.
+
+    Analyzes the current project to find relevant learnings from your
+    global knowledge base. Use --apply to import a suggestion to the
+    project ledger.
+    """
+    project = project.resolve()
+    global_ledger = get_global_ledger()
+
+    # Handle apply/import case
+    if apply:
+        project_ledger = get_project_ledger(project)
+
+        # Import the learning
+        new_learning = project_ledger.import_learning(global_ledger, apply)
+
+        if new_learning:
+            console.print(f"[green]Imported learning to project ledger[/green]")
+            console.print(f"  Original ID: {apply[:8]}...")
+            console.print(f"  New ID: {new_learning.id[:8]}")
+            console.print(f"  Category: {new_learning.category.value}")
+            console.print(f"  Confidence: {new_learning.confidence*100:.0f}%")
+            console.print(f"\n[bold]Content:[/bold]\n{new_learning.content[:300]}...")
+        else:
+            console.print(f"[yellow]Could not import learning {apply[:8]}[/yellow]")
+            console.print("  (It may already exist in the project ledger or not found)")
+        return
+
+    # Show suggestions
+    recommender = LearningRecommender(global_ledger)
+
+    console.print(f"[bold]Analyzing project:[/bold] {project}")
+
+    # Get project analysis
+    analysis = recommender.analyze_project(project)
+
+    console.print(f"[dim]Type: {analysis.project_type or 'unknown'}[/dim]")
+    if analysis.tech_stack:
+        console.print(f"[dim]Tech stack: {', '.join(analysis.tech_stack[:5])}[/dim]")
+    console.print("")
+
+    # Get suggestions
+    suggestions = recommender.get_suggestions_for_analysis(
+        analysis,
+        limit=limit,
+        min_confidence=min_confidence,
+    )
+
+    if not suggestions:
+        console.print("[dim]No relevant suggestions found in global ledger[/dim]")
+        console.print("[dim]Try lowering --min-confidence or adding more learnings[/dim]")
+        return
+
+    console.print(f"[bold]Suggested learnings from global knowledge:[/bold]\n")
+
+    for i, suggestion in enumerate(suggestions, 1):
+        learning = suggestion.learning
+        panel_content = []
+
+        # Header info
+        panel_content.append(f"[bold]ID:[/bold] {learning.id[:8]}")
+        panel_content.append(f"[bold]Category:[/bold] {learning.category.value}")
+        panel_content.append(f"[bold]Confidence:[/bold] {learning.confidence*100:.0f}%")
+        panel_content.append(f"[bold]Relevance:[/bold] {suggestion.relevance_score*100:.0f}%")
+
+        # Match reasons
+        if suggestion.match_reasons:
+            panel_content.append(f"[bold]Matched:[/bold] {', '.join(suggestion.match_reasons[:3])}")
+
+        # Content preview
+        content = learning.content
+        if len(content) > 300:
+            content = content[:300] + "..."
+        panel_content.append(f"\n[bold]Content:[/bold]\n{content}")
+
+        # Derived from info
+        if learning.derived_from:
+            panel_content.append(f"\n[dim]Derived from: {learning.derived_from[:8]}[/dim]")
+
+        panel = Panel(
+            "\n".join(panel_content),
+            title=f"Suggestion {i}",
+            border_style="cyan",
+        )
+        console.print(panel)
+
+    console.print(f"\n[dim]To import a suggestion: cclaude suggest --apply <id>[/dim]")
+
+
+# ============================================================================
+# Outcomes Commands
+# ============================================================================
+
+@main.group()
+def outcomes():
+    """Manage outcome recording for learnings."""
+    pass
+
+
+def get_session_learnings_path(project: Path) -> Path:
+    """Get the path to the session learnings tracking file."""
+    return project / ".claude" / "session_learnings.json"
+
+
+def load_session_learnings(path: Path) -> dict:
+    """Load session learnings data."""
+    import json
+    try:
+        if path.exists():
+            with open(path) as f:
+                return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        pass
+    return {"referenced_learnings": [], "last_updated": None}
+
+
+def get_learnings_needing_outcomes(
+    project: Optional[Path] = None,
+    min_outcome_count: int = 3,
+) -> list[dict]:
+    """Get learnings that have been referenced but need more outcome feedback.
+
+    Args:
+        project: Project directory (None for global only)
+        min_outcome_count: Threshold below which a learning "needs" more outcomes
+
+    Returns:
+        List of learning info dicts
+    """
+    import json
+
+    results = []
+    seen_ids = set()
+
+    # Determine which ledgers to check
+    ledger_paths = []
+    if project:
+        project = project.resolve()
+        ledger_paths.append(project / ".claude" / "ledger")
+
+        # Also check session learnings for recently referenced
+        session_path = get_session_learnings_path(project)
+        session_data = load_session_learnings(session_path)
+        recently_referenced = set(session_data.get("referenced_learnings", []))
+    else:
+        recently_referenced = set()
+
+    # Always include global ledger
+    ledger_paths.append(Path.home() / ".claude" / "ledger")
+
+    for ledger_path in ledger_paths:
+        reinforcements_file = ledger_path / "reinforcements.json"
+        if not reinforcements_file.exists():
+            continue
+
+        try:
+            with open(reinforcements_file) as f:
+                data = json.load(f)
+                learnings = data.get("learnings", {})
+
+            for lid, info in learnings.items():
+                lid_prefix = lid[:8].lower()
+
+                # Skip if already processed
+                if lid_prefix in seen_ids:
+                    continue
+                seen_ids.add(lid_prefix)
+
+                outcome_count = info.get("outcome_count", 0)
+
+                # Include if:
+                # 1. Recently referenced in session, OR
+                # 2. Has low outcome count
+                is_recently_referenced = lid_prefix in recently_referenced
+                needs_more_outcomes = outcome_count < min_outcome_count
+
+                if is_recently_referenced or needs_more_outcomes:
+                    # Get content from blocks
+                    content = _get_learning_content_for_outcomes(ledger_path, lid)
+
+                    results.append({
+                        "id": lid_prefix,
+                        "full_id": lid,
+                        "category": info.get("category", "unknown"),
+                        "confidence": info.get("confidence", 0.5),
+                        "outcome_count": outcome_count,
+                        "last_updated": info.get("last_updated"),
+                        "recently_referenced": is_recently_referenced,
+                        "content": content[:150] if content else "No content found",
+                        "ledger": "project" if ledger_path != Path.home() / ".claude" / "ledger" else "global",
+                    })
+
+        except (json.JSONDecodeError, IOError):
+            continue
+
+    # Sort: recently referenced first, then by outcome_count ascending
+    results.sort(key=lambda x: (not x["recently_referenced"], x["outcome_count"]))
+
+    return results
+
+
+def _get_learning_content_for_outcomes(ledger_path: Path, learning_id: str) -> Optional[str]:
+    """Get learning content by searching blocks."""
+    import json
+
+    blocks_dir = ledger_path / "blocks"
+    if not blocks_dir.exists():
+        return None
+
+    for block_file in blocks_dir.glob("*.json"):
+        try:
+            with open(block_file) as f:
+                block = json.load(f)
+            for learning in block.get("learnings", []):
+                if learning.get("id") == learning_id:
+                    return learning.get("content")
+        except (json.JSONDecodeError, IOError):
+            continue
+
+    return None
+
+
+@outcomes.command("pending")
+@click.option(
+    "--project", "-p",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory (default: current directory)",
+)
+@click.option(
+    "--all", "-a", "show_all",
+    is_flag=True,
+    default=False,
+    help="Show all learnings needing outcomes (not just recently referenced)",
+)
+@click.option(
+    "--limit", "-n",
+    type=int,
+    default=20,
+    help="Maximum results to show (default: 20)",
+)
+def outcomes_pending(project: Path, show_all: bool, limit: int):
+    """List learnings that need outcome feedback.
+
+    Shows learnings that were referenced in recent sessions but haven't
+    received enough outcome feedback to build reliable confidence scores.
+    """
+    project = project.resolve()
+
+    learnings = get_learnings_needing_outcomes(project)
+
+    if not show_all:
+        # Filter to only recently referenced
+        learnings = [l for l in learnings if l.get("recently_referenced")]
+
+    if not learnings:
+        if show_all:
+            console.print("[dim]No learnings found needing outcomes[/dim]")
+        else:
+            console.print("[dim]No recently referenced learnings need outcomes[/dim]")
+            console.print("[dim]Use --all to show all learnings with low outcome counts[/dim]")
+        return
+
+    learnings = learnings[:limit]
+
+    table = Table(title=f"Learnings Needing Outcomes ({len(learnings)})")
+    table.add_column("ID", style="cyan", width=8)
+    table.add_column("Cat", style="dim", width=10)
+    table.add_column("Conf", style="green", width=5)
+    table.add_column("Out#", style="yellow", width=4)
+    table.add_column("Recent", style="magenta", width=6)
+    table.add_column("Content", style="white")
+
+    for l in learnings:
+        conf_pct = f"{int(l['confidence']*100)}%"
+        recent = "Yes" if l.get("recently_referenced") else ""
+        content = l["content"][:60] + "..." if len(l["content"]) > 60 else l["content"]
+
+        table.add_row(
+            l["id"],
+            l["category"],
+            conf_pct,
+            str(l["outcome_count"]),
+            recent,
+            content,
+        )
+
+    console.print(table)
+
+    console.print("\n[bold]To record an outcome:[/bold]")
+    console.print("  uv run cclaude outcome <ID> -r <success|partial|failure> -c \"description\"")
+    console.print("\n[bold]For batch recording:[/bold]")
+    console.print("  uv run cclaude outcomes batch")
+
+
+@outcomes.command("batch")
+@click.option(
+    "--project", "-p",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory (default: current directory)",
+)
+@click.option(
+    "--limit", "-n",
+    type=int,
+    default=10,
+    help="Maximum learnings to process (default: 10)",
+)
+def outcomes_batch(project: Path, limit: int):
+    """Interactive mode to record outcomes for multiple learnings.
+
+    Walks through learnings that need outcomes and prompts for feedback.
+    """
+    from .ledger.models import OutcomeResult
+
+    project = project.resolve()
+
+    learnings = get_learnings_needing_outcomes(project)
+    if not learnings:
+        console.print("[dim]No learnings found needing outcomes[/dim]")
+        return
+
+    learnings = learnings[:limit]
+
+    console.print(Panel(
+        "[bold]Batch Outcome Recording[/bold]\n\n"
+        f"You will be prompted for {len(learnings)} learnings.\n"
+        "For each, enter: [green]s[/green]uccess, [yellow]p[/yellow]artial, [red]f[/red]ailure, or [dim]skip[/dim]\n\n"
+        "Press Ctrl+C to exit at any time.",
+        title="Outcome Recording",
+        border_style="blue",
+    ))
+
+    recorded = 0
+    skipped = 0
+
+    for i, learning in enumerate(learnings, 1):
+        console.print(f"\n[bold]({i}/{len(learnings)})[/bold] Learning: [cyan]{learning['id']}[/cyan]")
+        console.print(f"  Category: {learning['category']}")
+        console.print(f"  Confidence: {int(learning['confidence']*100)}%")
+        console.print(f"  Outcomes so far: {learning['outcome_count']}")
+        console.print(f"  Content: {learning['content']}")
+        console.print()
+
+        try:
+            result_input = click.prompt(
+                "Result (s/p/f/skip)",
+                type=str,
+                default="skip",
+            ).lower().strip()
+
+            if result_input in ("skip", ""):
+                skipped += 1
+                console.print("[dim]Skipped[/dim]")
+                continue
+
+            result_map = {
+                "s": "success",
+                "success": "success",
+                "p": "partial",
+                "partial": "partial",
+                "f": "failure",
+                "failure": "failure",
+            }
+
+            if result_input not in result_map:
+                console.print("[yellow]Invalid result, skipping[/yellow]")
+                skipped += 1
+                continue
+
+            result = result_map[result_input]
+
+            context = click.prompt(
+                "Context (brief description)",
+                type=str,
+                default="Applied in session",
+            )
+
+            # Record the outcome
+            # Determine which ledger to use
+            if learning["ledger"] == "project":
+                ledger = get_project_ledger(project)
+            else:
+                ledger = get_global_ledger()
+
+            # Find and update the learning
+            found = False
+            for block in ledger.get_all_blocks():
+                for learn_obj in block.learnings:
+                    if learn_obj.id.startswith(learning["id"]):
+                        result_enum = OutcomeResult(result)
+                        learn_obj.apply_outcome(result_enum, context)
+
+                        # Update the block file
+                        block_file = ledger.blocks_dir / f"{block.id}.json"
+                        ledger._write_json(block_file, block.model_dump(mode="json"))
+
+                        # Update reinforcements
+                        ledger.update_learning_confidence(learn_obj.id, learn_obj.confidence)
+
+                        console.print(f"[green]Recorded {result} -> new confidence: {int(learn_obj.confidence*100)}%[/green]")
+                        recorded += 1
+                        found = True
+                        break
+                if found:
+                    break
+
+            if not found:
+                console.print(f"[red]Learning {learning['id']} not found in ledger[/red]")
+                skipped += 1
+
+        except click.Abort:
+            console.print("\n[yellow]Aborted[/yellow]")
+            break
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Aborted[/yellow]")
+            break
+
+    console.print(f"\n[bold]Summary:[/bold] Recorded {recorded}, Skipped {skipped}")
 
 
 if __name__ == "__main__":

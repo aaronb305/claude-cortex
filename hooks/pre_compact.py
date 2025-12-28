@@ -5,438 +5,185 @@ PreCompact hook for continuous-claude-custom.
 Extracts learnings from the conversation BEFORE compaction happens,
 ensuring no learnings are lost when the context gets summarized.
 
-Also saves a handoff to capture work-in-progress state.
+Also saves a handoff to capture work-in-progress state and a summary
+to preserve conversation context across compactions.
 """
 
-import hashlib
 import json
 import re
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
-
-class LearningCategory:
-    DISCOVERY = "discovery"
-    DECISION = "decision"
-    ERROR = "error"
-    PATTERN = "pattern"
-
-
-def get_ledger_path(project_dir: Optional[str], is_global: bool = False) -> Path:
-    """Get the path to a ledger directory."""
-    if is_global:
-        return Path.home() / ".claude" / "ledger"
-    elif project_dir:
-        return Path(project_dir) / ".claude" / "ledger"
-    else:
-        return Path.cwd() / ".claude" / "ledger"
+from shared import (
+    append_block,
+    extract_assistant_messages,
+    extract_blockers_from_text,
+    extract_learnings,
+    extract_tasks_from_text,
+    get_ledger_path,
+    get_modified_files,
+    read_transcript,
+    save_handoff,
+    write_json,
+)
 
 
-def ensure_ledger_structure(ledger_path: Path) -> None:
-    """Ensure ledger directory structure exists."""
-    ledger_path.mkdir(parents=True, exist_ok=True)
-    (ledger_path / "blocks").mkdir(exist_ok=True)
+# -----------------------------------------------------------------------------
+# Summary-specific functions (not in shared.py)
+# -----------------------------------------------------------------------------
 
-    index_file = ledger_path / "index.json"
-    if not index_file.exists():
-        write_json(index_file, {"head": None, "blocks": []})
-
-    reinforcements_file = ledger_path / "reinforcements.json"
-    if not reinforcements_file.exists():
-        write_json(reinforcements_file, {"learnings": {}})
-
-
-def read_json(path: Path) -> dict:
-    """Read JSON from a file."""
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-
-def write_json(path: Path, data: dict) -> None:
-    """Write JSON to a file."""
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2, default=str)
-
-
-def read_transcript(transcript_path: str) -> list[dict]:
-    """Read the session transcript (JSONL format)."""
-    events = []
-    try:
-        with open(transcript_path, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        events.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
-    except FileNotFoundError:
-        pass
-    return events
-
-
-def extract_assistant_messages(events: list[dict]) -> str:
-    """Extract all assistant messages from transcript events."""
-    messages = []
-
-    for event in events:
-        # Handle different event formats
-        if event.get("type") == "assistant":
-            content = event.get("message", {}).get("content", [])
-            for block in content:
-                if block.get("type") == "text":
-                    messages.append(block.get("text", ""))
-
-        # Alternative format
-        elif "content" in event and isinstance(event["content"], list):
-            for block in event["content"]:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    messages.append(block.get("text", ""))
-
-    return "\n\n".join(messages)
-
-
-def is_valid_learning(content: str) -> bool:
-    """Check if content looks like a valid learning vs noise."""
-    # Reject if it looks like a markdown table
-    if content.count("|") > 2:
-        return False
-    # Reject if it's mostly special characters
-    alnum_ratio = sum(c.isalnum() or c.isspace() for c in content) / max(len(content), 1)
-    if alnum_ratio < 0.6:
-        return False
-    # Reject if it starts with markdown formatting artifacts
-    if content.startswith(("-", "*", "|", "#", "```")):
-        return False
-    # Reject if it looks like a code snippet
-    if content.count("(") > 3 or content.count("{") > 2:
-        return False
-    # Must have some actual words
-    words = [w for w in content.split() if len(w) > 2 and w.isalpha()]
-    if len(words) < 3:
-        return False
-    return True
-
-
-def extract_learnings(text: str) -> list[dict]:
-    """Extract learnings from text using tagged patterns."""
-    learnings = []
-    seen_content = set()
-
-    # More restrictive patterns - capture until end of sentence/line or next tag
-    # Tags should be at start of line or after whitespace
-    patterns = {
-        LearningCategory.DISCOVERY: re.compile(
-            r"(?:^|\n)\s*\[DISCOVERY\]\s*([^\n\[]+?)(?:\.|$|\n|\[)",
-            re.IGNORECASE,
-        ),
-        LearningCategory.DECISION: re.compile(
-            r"(?:^|\n)\s*\[DECISION\]\s*([^\n\[]+?)(?:\.|$|\n|\[)",
-            re.IGNORECASE,
-        ),
-        LearningCategory.ERROR: re.compile(
-            r"(?:^|\n)\s*\[ERROR\]\s*([^\n\[]+?)(?:\.|$|\n|\[)",
-            re.IGNORECASE,
-        ),
-        LearningCategory.PATTERN: re.compile(
-            r"(?:^|\n)\s*\[PATTERN\]\s*([^\n\[]+?)(?:\.|$|\n|\[)",
-            re.IGNORECASE,
-        ),
-    }
-
-    for category, pattern in patterns.items():
-        matches = pattern.findall(text)
-        for match in matches:
-            content = match.strip()
-            # Clean up the content
-            content = re.sub(r"\s+", " ", content)
-            content = content[:500]  # Limit length
-
-            # Validate the content looks like a real learning
-            if not content or len(content) < 20 or content in seen_content:
-                continue
-            if not is_valid_learning(content):
-                continue
-
-            seen_content.add(content)
-
-            # Try to extract source file reference
-            source = None
-            file_match = re.search(r"(?:in|from|at|see)\s+([a-zA-Z0-9_\-./]+\.[a-zA-Z]+)", content)
-            if file_match:
-                source = file_match.group(1)
-
-            learnings.append({
-                "id": str(uuid4()),
-                "category": category,
-                "content": content,
-                "confidence": 0.5,
-                "source": source,
-                "outcomes": [],
-            })
-
-    return learnings
-
-
-def compute_block_hash(block: dict) -> str:
-    """Compute SHA-256 hash of block contents."""
-    content = {
-        "id": block["id"],
-        "timestamp": block["timestamp"],
-        "session_id": block["session_id"],
-        "parent_block": block["parent_block"],
-        "learnings": block["learnings"],
-    }
-    content_str = json.dumps(content, sort_keys=True, default=str)
-    return hashlib.sha256(content_str.encode()).hexdigest()
-
-
-def append_block(ledger_path: Path, session_id: str, learnings: list[dict]) -> Optional[dict]:
-    """Append a new block to the ledger."""
-    if not learnings:
-        return None
-
-    ensure_ledger_structure(ledger_path)
-
-    index_file = ledger_path / "index.json"
-    index = read_json(index_file)
-
-    head = index.get("head")
-    block_id = str(uuid4())[:8]
-
-    block = {
-        "id": block_id,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "session_id": session_id,
-        "parent_block": head,
-        "learnings": learnings,
-    }
-    block["hash"] = compute_block_hash(block)
-
-    # Write block
-    block_file = ledger_path / "blocks" / f"{block_id}.json"
-    write_json(block_file, block)
-
-    # Update index
-    index["head"] = block_id
-    index["blocks"].append({
-        "id": block_id,
-        "timestamp": block["timestamp"],
-        "hash": block["hash"],
-        "parent": head,
-    })
-    write_json(index_file, index)
-
-    # Update reinforcements
-    reinforcements_file = ledger_path / "reinforcements.json"
-    reinforcements = read_json(reinforcements_file)
-
-    for learning in learnings:
-        reinforcements["learnings"][learning["id"]] = {
-            "category": learning["category"],
-            "confidence": learning["confidence"],
-            "outcome_count": 0,
-            "last_updated": datetime.now(timezone.utc).isoformat(),
-        }
-
-    write_json(reinforcements_file, reinforcements)
-
-    return block
-
-
-def get_modified_files(project_dir: Path) -> list[str]:
-    """Get list of modified files using git.
-
-    Args:
-        project_dir: The project directory.
-
-    Returns:
-        List of file paths that have been modified.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=project_dir,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            return []
-
-        files = []
-        for line in result.stdout.strip().split("\n"):
-            if line:
-                file_path = line[3:].strip()
-                if " -> " in file_path:
-                    file_path = file_path.split(" -> ")[1]
-                files.append(file_path)
-        return files
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-        return []
-
-
-def extract_tasks_from_text(text: str) -> tuple[list[str], list[str]]:
-    """Extract completed and pending tasks from assistant text.
+def extract_decisions_from_text(text: str) -> list[str]:
+    """Extract key decisions from transcript text.
 
     Args:
         text: The assistant messages text.
 
     Returns:
-        Tuple of (completed_tasks, pending_tasks).
+        List of decisions identified.
     """
-    completed = []
-    pending = []
+    decisions = []
+    seen = set()
 
-    # Look for common task patterns
-    # Completed patterns
-    completed_patterns = [
-        r"(?:completed|done|finished|implemented|created|added|fixed|updated):\s*(.+?)(?:\n|$)",
-        r"I(?:'ve| have)\s+(?:completed|done|finished|implemented|created|added|fixed|updated)\s+(.+?)(?:\.|$)",
-        r"^\s*-\s*\[x\]\s*(.+?)$",  # Checkbox completed
+    patterns = [
+        r"(?:I(?:'ve| have)?\s+)?decided to\s+(.+?)(?:\.|$)",
+        r"(?:I(?:'ll| will)?\s+)?(?:chose|choose) to\s+(.+?)(?:\.|$)",
+        r"\[DECISION\]\s*(.+?)(?:\.|$|\n|\[)",
+        r"(?:The|My)\s+approach (?:is|will be) to\s+(.+?)(?:\.|$)",
+        r"(?:I(?:'m| am)?\s+)?going with\s+(.+?)(?:\.|$)",
     ]
 
-    # Pending patterns
-    pending_patterns = [
-        r"(?:todo|remaining|still need to|next|pending):\s*(.+?)(?:\n|$)",
-        r"(?:still need to|should still|remaining to)\s+(.+?)(?:\.|$)",
-        r"^\s*-\s*\[\s*\]\s*(.+?)$",  # Checkbox unchecked
-    ]
-
-    for pattern in completed_patterns:
+    for pattern in patterns:
         matches = re.findall(pattern, text, re.IGNORECASE | re.MULTILINE)
         for match in matches:
-            task = match.strip()[:200]  # Limit length
-            if task and len(task) > 10:
-                completed.append(task)
+            decision = match.strip()
+            decision = re.sub(r"\s+", " ", decision)[:200]
+            if decision and len(decision) > 15 and decision.lower() not in seen:
+                seen.add(decision.lower())
+                decisions.append(decision)
 
-    for pattern in pending_patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE | re.MULTILINE)
-        for match in matches:
-            task = match.strip()[:200]
-            if task and len(task) > 10:
-                pending.append(task)
-
-    # Deduplicate
-    return list(dict.fromkeys(completed))[:10], list(dict.fromkeys(pending))[:10]
+    return decisions[:10]
 
 
-def extract_blockers_from_text(text: str) -> list[str]:
-    """Extract blockers from assistant text.
+def extract_files_from_text(text: str) -> list[str]:
+    """Extract file paths discussed in the transcript.
 
     Args:
         text: The assistant messages text.
 
     Returns:
-        List of blockers.
+        List of file paths mentioned.
     """
-    blockers = []
+    files = set()
 
-    blocker_patterns = [
-        r"(?:blocked by|blocker|blocking issue|cannot proceed|waiting for):\s*(.+?)(?:\n|$)",
-        r"(?:issue|problem|error):\s*(.+?)(?:\n|$)",
+    patterns = [
+        r"(?:reading|read|wrote|writing|created|modified|updated|editing|edited)\s+[`\"']?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)[`\"']?",
+        r"(?:in|from|at|see|file)\s+[`\"']?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)[`\"']?",
+        r"[`\"']([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]{1,5})[`\"']",
     ]
 
-    for pattern in blocker_patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE | re.MULTILINE)
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
         for match in matches:
-            blocker = match.strip()[:200]
-            if blocker and len(blocker) > 10:
-                blockers.append(blocker)
+            file_path = match.strip()
+            if (
+                file_path
+                and len(file_path) > 3
+                and not file_path.startswith("http")
+                and "/" not in file_path[:2]
+                and not file_path.endswith(".0")
+            ):
+                files.add(file_path)
 
-    return list(dict.fromkeys(blockers))[:5]
+    return sorted(list(files))[:30]
 
 
-def save_handoff(
+def generate_summary_text(text: str) -> str:
+    """Generate a summary of the conversation.
+
+    This creates a brief summary from the conversation content.
+
+    Args:
+        text: The assistant messages text.
+
+    Returns:
+        A summary string.
+    """
+    # Take the first and last substantial paragraphs
+    paragraphs = [p.strip() for p in text.split("\n\n") if len(p.strip()) > 50]
+
+    if not paragraphs:
+        return "Session with no substantial text content."
+
+    summary_parts = []
+
+    # First paragraph (what we started with)
+    if paragraphs:
+        first = paragraphs[0][:300]
+        if len(paragraphs[0]) > 300:
+            first += "..."
+        summary_parts.append(first)
+
+    # Last paragraph (where we ended up)
+    if len(paragraphs) > 1:
+        last = paragraphs[-1][:300]
+        if len(paragraphs[-1]) > 300:
+            last += "..."
+        summary_parts.append(last)
+
+    return "\n\n".join(summary_parts)
+
+
+def save_summary(
     project_dir: Path,
     session_id: str,
-    completed_tasks: list[str],
-    pending_tasks: list[str],
-    blockers: list[str],
-    modified_files: list[str],
-    context_notes: str = "",
+    summary_text: str,
+    key_decisions: list[str],
+    files_discussed: list[str],
+    learning_ids: list[str],
 ) -> Optional[Path]:
-    """Save a handoff to disk.
+    """Save a summary to disk.
 
     Args:
         project_dir: The project directory.
         session_id: The session identifier.
-        completed_tasks: List of completed tasks.
-        pending_tasks: List of pending tasks.
-        blockers: List of blockers.
-        modified_files: List of modified files.
-        context_notes: Additional context notes.
+        summary_text: The summary text.
+        key_decisions: List of key decisions.
+        files_discussed: List of files discussed.
+        learning_ids: List of learning IDs captured.
 
     Returns:
-        Path to the saved handoff file, or None if failed.
+        Path to the saved summary file, or None if failed.
     """
     try:
-        handoffs_dir = project_dir / ".claude" / "handoffs" / session_id
-        handoffs_dir.mkdir(parents=True, exist_ok=True)
+        summaries_dir = project_dir / ".claude" / "summaries" / session_id
+        summaries_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now(timezone.utc)
         timestamp_str = timestamp.strftime("%Y%m%d-%H%M%S")
-        filename = f"handoff-{timestamp_str}.md"
-        file_path = handoffs_dir / filename
+        filename = f"summary-{timestamp_str}.json"
+        file_path = summaries_dir / filename
 
-        # Build markdown content
-        lines = [
-            "---",
-            f"session_id: {session_id}",
-            f"timestamp: {timestamp.isoformat()}",
-            "---",
-            "",
-            "## Completed",
-        ]
-        if completed_tasks:
-            for task in completed_tasks:
-                lines.append(f"- {task}")
-        else:
-            lines.append("- None")
-        lines.append("")
+        data = {
+            "session_id": session_id,
+            "timestamp": timestamp.isoformat(),
+            "summary_text": summary_text,
+            "key_decisions": key_decisions,
+            "files_discussed": files_discussed,
+            "learning_ids": learning_ids,
+        }
 
-        lines.append("## Pending")
-        if pending_tasks:
-            for task in pending_tasks:
-                lines.append(f"- {task}")
-        else:
-            lines.append("- None")
-        lines.append("")
-
-        lines.append("## Modified Files")
-        if modified_files:
-            for fp in modified_files:
-                lines.append(f"- {fp}")
-        else:
-            lines.append("- None")
-        lines.append("")
-
-        lines.append("## Blockers")
-        if blockers:
-            for blocker in blockers:
-                lines.append(f"- {blocker}")
-        else:
-            lines.append("- None")
-        lines.append("")
-
-        lines.append("## Context")
-        lines.append(context_notes if context_notes else "Pre-compaction handoff saved automatically.")
-        lines.append("")
-
-        content = "\n".join(lines)
-        file_path.write_text(content, encoding="utf-8")
-
+        write_json(file_path, data)
         return file_path
     except Exception:
         return None
 
+
+# -----------------------------------------------------------------------------
+# Main entry point
+# -----------------------------------------------------------------------------
 
 def main():
     """Main hook entry point."""
@@ -515,6 +262,30 @@ def main():
             messages.append(f"Saved handoff with {len(modified_files)} modified files.")
     except Exception as e:
         print(f"[continuous-claude] PreCompact: Failed to save handoff: {e}", file=sys.stderr)
+
+    # Save summary before compaction
+    try:
+        key_decisions = extract_decisions_from_text(assistant_text)
+        files_discussed = extract_files_from_text(assistant_text)
+        summary_text = generate_summary_text(assistant_text)
+
+        # Collect learning IDs from extracted learnings
+        learning_ids = [l["id"] for l in learnings] if learnings else []
+
+        summary_path = save_summary(
+            project_dir=project_dir,
+            session_id=session_id,
+            summary_text=summary_text,
+            key_decisions=key_decisions,
+            files_discussed=files_discussed,
+            learning_ids=learning_ids,
+        )
+
+        if summary_path:
+            print(f"[continuous-claude] PreCompact: Saved summary -> {summary_path}", file=sys.stderr)
+            messages.append(f"Saved summary with {len(key_decisions)} decisions and {len(files_discussed)} files.")
+    except Exception as e:
+        print(f"[continuous-claude] PreCompact: Failed to save summary: {e}", file=sys.stderr)
 
     # Combine messages for output
     if messages:

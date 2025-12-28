@@ -26,6 +26,11 @@ class SearchIndex:
 
     Uses porter stemming and unicode61 tokenizer for robust search
     across learning content.
+
+    Supports context manager pattern for proper connection management:
+        with SearchIndex(db_path) as index:
+            index.search("query")
+            index.index_learning(...)
     """
 
     def __init__(self, db_path: Optional[Path] = None):
@@ -42,7 +47,20 @@ class SearchIndex:
 
         self.db_path = db_path
         self._connection: Optional[sqlite3.Connection] = None
+        self._in_context: bool = False
         self.create_tables()
+
+    def __enter__(self) -> "SearchIndex":
+        """Enter context manager, keeping connection open."""
+        self._in_context = True
+        # Ensure connection is established
+        _ = self.connection
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit context manager, closing connection."""
+        self._in_context = False
+        self.close()
 
     @property
     def connection(self) -> sqlite3.Connection:
