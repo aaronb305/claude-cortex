@@ -1232,5 +1232,244 @@ def outcomes_batch(project: Path, limit: int):
     console.print(f"\n[bold]Summary:[/bold] Recorded {recorded}, Skipped {skipped}")
 
 
+# ============================================================================
+# Analyze Commands (Braintrust-like session analysis)
+# ============================================================================
+
+@main.group()
+def analyze():
+    """LLM-powered session analysis (Braintrust-like insights)."""
+    pass
+
+
+@analyze.command("session")
+@click.argument("transcript_path", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--session-id", "-s",
+    type=str,
+    default=None,
+    help="Session ID (default: derived from filename)",
+)
+@click.option(
+    "--no-llm",
+    is_flag=True,
+    help="Use regex-only extraction (faster, less accurate)",
+)
+@click.option(
+    "--project", "-p",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project directory for saving insights",
+)
+@click.option(
+    "--save-learnings",
+    is_flag=True,
+    help="Also save extracted insights as learnings to the ledger",
+)
+def analyze_session_cmd(
+    transcript_path: Path,
+    session_id: Optional[str],
+    no_llm: bool,
+    project: Optional[Path],
+    save_learnings: bool,
+):
+    """Analyze a session transcript and extract structured insights.
+
+    Provides Braintrust-like learning extraction:
+    - What Worked: Successful approaches and decisions
+    - What Failed: Errors, dead ends, incorrect assumptions
+    - Patterns: Reusable solutions and workflows
+    - Key Decisions: Important choices made during the session
+    """
+    try:
+        from .analysis import TranscriptAnalyzer, SessionInsights
+        from .analysis.transcript import save_insights
+    except ImportError:
+        console.print("[red]Analysis module not available[/red]")
+        return
+
+    # Derive session ID from filename if not provided
+    if not session_id:
+        session_id = transcript_path.stem
+
+    console.print(f"[bold]Analyzing session:[/bold] {session_id}")
+    console.print(f"[dim]Transcript: {transcript_path}[/dim]")
+    console.print(f"[dim]Using LLM: {not no_llm}[/dim]\n")
+
+    # Create analyzer and run
+    analyzer = TranscriptAnalyzer(use_llm=not no_llm)
+    insights = analyzer.analyze_from_file(transcript_path, session_id)
+
+    # Display results
+    console.print(Panel(insights.summary or "No summary generated", title="Summary"))
+
+    if insights.what_worked:
+        console.print("\n[bold green]What Worked[/bold green]")
+        for item in insights.what_worked:
+            console.print(f"  • {item}")
+
+    if insights.what_failed:
+        console.print("\n[bold red]What Failed[/bold red]")
+        for item in insights.what_failed:
+            console.print(f"  • {item}")
+
+    if insights.patterns:
+        console.print("\n[bold blue]Patterns Identified[/bold blue]")
+        for item in insights.patterns:
+            console.print(f"  • {item}")
+
+    if insights.key_decisions:
+        console.print("\n[bold yellow]Key Decisions[/bold yellow]")
+        for item in insights.key_decisions:
+            console.print(f"  • {item}")
+
+    if insights.metrics:
+        console.print("\n[bold]Metrics[/bold]")
+        console.print(f"  Duration: {insights.metrics.duration_seconds:.1f}s")
+        console.print(f"  Turns: {insights.metrics.turn_count}")
+        console.print(f"  Tool calls: {insights.metrics.tool_call_count}")
+        console.print(f"  Success rate: {insights.metrics.overall_success_rate:.1f}%")
+
+        patterns = insights.metrics.get_frequent_patterns()
+        if patterns:
+            console.print("\n  [dim]Frequent Tool Patterns:[/dim]")
+            for pattern, count in patterns[:5]:
+                console.print(f"    {pattern} ({count}x)")
+
+    # Save insights
+    if project:
+        project = project.resolve()
+        insights_dir = project / ".claude" / "insights" / session_id
+        save_insights(insights, insights_dir)
+        console.print(f"\n[green]Insights saved to {insights_dir}[/green]")
+
+    # Save as learnings if requested
+    if save_learnings:
+        learnings = insights.to_learnings()
+        if learnings:
+            ledger = get_project_ledger(project) if project else get_global_ledger()
+            block = ledger.create_block(f"analysis-{session_id}")
+            for learning in learnings:
+                block.add_learning(
+                    category=LearningCategory(learning["category"]),
+                    content=learning["content"],
+                    source=learning.get("source"),
+                    confidence=learning.get("confidence", 0.5),
+                )
+            ledger.append_block(block)
+            console.print(f"[green]Saved {len(learnings)} learnings to ledger[/green]")
+
+
+@analyze.command("metrics")
+@click.option(
+    "--project", "-p",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory",
+)
+@click.option(
+    "--limit", "-n",
+    type=int,
+    default=10,
+    help="Number of recent sessions to analyze",
+)
+def analyze_metrics(project: Path, limit: int):
+    """Show aggregated metrics across recent sessions."""
+    project = project.resolve()
+    insights_dir = project / ".claude" / "insights"
+
+    if not insights_dir.exists():
+        console.print("[yellow]No insights found. Run 'cclaude analyze session' first.[/yellow]")
+        return
+
+    import json
+
+    # Collect all insights
+    all_insights = []
+    for session_dir in sorted(insights_dir.iterdir(), reverse=True)[:limit]:
+        if not session_dir.is_dir():
+            continue
+        for insight_file in session_dir.glob("insights-*.json"):
+            try:
+                with open(insight_file) as f:
+                    data = json.load(f)
+                    all_insights.append(data)
+            except (json.JSONDecodeError, IOError):
+                continue
+
+    if not all_insights:
+        console.print("[yellow]No insights data found.[/yellow]")
+        return
+
+    # Aggregate metrics
+    total_duration = 0
+    total_turns = 0
+    total_tool_calls = 0
+    total_errors = 0
+    tool_usage = {}
+    all_patterns = []
+    all_failures = []
+
+    for insight in all_insights:
+        metrics = insight.get("metrics", {})
+        total_duration += metrics.get("duration_seconds", 0)
+        total_turns += metrics.get("turn_count", 0)
+        total_tool_calls += metrics.get("tool_call_count", 0)
+        total_errors += metrics.get("error_count", 0)
+
+        for tool, info in metrics.get("tool_metrics", {}).items():
+            if tool not in tool_usage:
+                tool_usage[tool] = {"calls": 0, "errors": 0}
+            tool_usage[tool]["calls"] += info.get("call_count", 0)
+            tool_usage[tool]["errors"] += info.get("call_count", 0) - int(
+                info.get("call_count", 0) * info.get("success_rate", 100) / 100
+            )
+
+        all_patterns.extend(insight.get("patterns", []))
+        all_failures.extend(insight.get("what_failed", []))
+
+    # Display aggregated metrics
+    console.print(f"[bold]Session Analysis Summary[/bold] ({len(all_insights)} sessions)\n")
+
+    console.print(f"Total duration: {total_duration / 60:.1f} minutes")
+    console.print(f"Total turns: {total_turns}")
+    console.print(f"Total tool calls: {total_tool_calls}")
+    console.print(f"Overall success rate: {((total_tool_calls - total_errors) / max(total_tool_calls, 1)) * 100:.1f}%")
+
+    if tool_usage:
+        console.print("\n[bold]Tool Usage[/bold]")
+        table = Table()
+        table.add_column("Tool")
+        table.add_column("Calls", justify="right")
+        table.add_column("Errors", justify="right")
+        table.add_column("Success %", justify="right")
+
+        for tool, info in sorted(tool_usage.items(), key=lambda x: x[1]["calls"], reverse=True)[:10]:
+            success_rate = ((info["calls"] - info["errors"]) / max(info["calls"], 1)) * 100
+            table.add_row(
+                tool,
+                str(info["calls"]),
+                str(info["errors"]),
+                f"{success_rate:.0f}%",
+            )
+        console.print(table)
+
+    # Common patterns
+    if all_patterns:
+        console.print("\n[bold]Common Patterns[/bold]")
+        from collections import Counter
+        pattern_counts = Counter(all_patterns)
+        for pattern, count in pattern_counts.most_common(5):
+            console.print(f"  ({count}x) {pattern[:80]}...")
+
+    # Common failures
+    if all_failures:
+        console.print("\n[bold]Common Failures[/bold]")
+        from collections import Counter
+        failure_counts = Counter(all_failures)
+        for failure, count in failure_counts.most_common(5):
+            console.print(f"  ({count}x) {failure[:80]}...")
+
+
 if __name__ == "__main__":
     main()

@@ -35,8 +35,10 @@ try:
 
     from continuous_claude.ledger import LearningCategory as _PkgLearningCategory
     from continuous_claude.search import SearchIndex
+    from continuous_claude.analysis import TranscriptAnalyzer, SessionInsights
 
     # Use package LearningCategory
+    ANALYSIS_AVAILABLE = True
     class LearningCategory:
         """Learning category constants matching the package enum."""
         DISCOVERY = _PkgLearningCategory.DISCOVERY.value
@@ -55,7 +57,10 @@ except ImportError:
         PATTERN = "pattern"
 
     SearchIndex = None
+    TranscriptAnalyzer = None
+    SessionInsights = None
     PACKAGE_AVAILABLE = False
+    ANALYSIS_AVAILABLE = False
 
 
 # -----------------------------------------------------------------------------
@@ -980,6 +985,82 @@ def get_learning_content(ledger_path: Path, learning_id: str) -> Optional[str]:
 
 
 # -----------------------------------------------------------------------------
+# LLM-powered session analysis
+# -----------------------------------------------------------------------------
+
+def analyze_session(
+    transcript_path: str,
+    session_id: str,
+    use_llm: bool = True,
+    save_insights: bool = True,
+    project_dir: Optional[Path] = None,
+) -> Optional[dict]:
+    """Analyze a session transcript and extract structured insights.
+
+    This provides Braintrust-like learning extraction using LLM analysis
+    of the full transcript, not just tagged content.
+
+    Args:
+        transcript_path: Path to the transcript file.
+        session_id: Session identifier.
+        use_llm: Whether to use LLM for analysis (vs regex fallback).
+        save_insights: Whether to save insights to disk.
+        project_dir: Project directory for saving insights.
+
+    Returns:
+        Dictionary with insights, or None if analysis failed.
+    """
+    if not ANALYSIS_AVAILABLE:
+        return None
+
+    try:
+        transcript_file = Path(transcript_path)
+        if not transcript_file.exists():
+            return None
+
+        # Create analyzer
+        analyzer = TranscriptAnalyzer(use_llm=use_llm)
+
+        # Analyze transcript
+        insights = analyzer.analyze_from_file(transcript_file, session_id)
+
+        # Save insights if requested
+        if save_insights and project_dir:
+            insights_dir = project_dir / ".claude" / "insights" / session_id
+            from continuous_claude.analysis.transcript import save_insights as _save
+            _save(insights, insights_dir)
+
+        return insights.to_dict()
+    except Exception:
+        return None
+
+
+def insights_to_learnings(insights_dict: dict) -> list[dict]:
+    """Convert session insights to learning format for ledger storage.
+
+    Args:
+        insights_dict: Dictionary from analyze_session()
+
+    Returns:
+        List of learning dicts ready for append_block()
+    """
+    if not ANALYSIS_AVAILABLE or not insights_dict:
+        return []
+
+    try:
+        insights = SessionInsights(
+            session_id=insights_dict.get("session_id", "unknown"),
+            what_worked=insights_dict.get("what_worked", []),
+            what_failed=insights_dict.get("what_failed", []),
+            patterns=insights_dict.get("patterns", []),
+            key_decisions=insights_dict.get("key_decisions", []),
+        )
+        return insights.to_learnings()
+    except Exception:
+        return []
+
+
+# -----------------------------------------------------------------------------
 # Module exports
 # -----------------------------------------------------------------------------
 
@@ -1022,4 +1103,8 @@ __all__ = [
     # Learning queries
     "get_learnings_by_confidence",
     "get_learning_content",
+    # Session analysis
+    "ANALYSIS_AVAILABLE",
+    "analyze_session",
+    "insights_to_learnings",
 ]
