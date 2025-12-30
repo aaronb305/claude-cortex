@@ -288,10 +288,24 @@ def main():
         print(f"[continuous-claude] PreCompact: Failed to save summary: {e}", file=sys.stderr)
 
     # Combine messages for output
-    if messages:
-        output["message"] = " ".join(messages)
+    status_msg = " ".join(messages) if messages else ""
 
-    # Output result (empty dict or with message)
+    # Add prompt injection asking Claude to tag untagged learnings
+    # This is the safety net before context compaction
+    tagging_prompt = """
+
+⚠️ **Context compaction imminent** - Before your context is summarized, please review this session for any untagged learnings:
+
+1. **Bugs fixed** → `[ERROR] what caused it and how to avoid`
+2. **Decisions made** → `[DECISION] what was chosen and why`
+3. **Discoveries** → `[DISCOVERY] new insight about how something works`
+4. **Patterns identified** → `[PATTERN] reusable solution`
+
+If you've already tagged all learnings, acknowledge this. If there are untagged insights from this session, tag them now before they're lost to compaction."""
+
+    output["message"] = status_msg + tagging_prompt
+
+    # Output result
     print(json.dumps(output))
     sys.exit(0)
 

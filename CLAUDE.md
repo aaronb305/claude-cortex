@@ -185,16 +185,51 @@ Learnings track their origin:
 
 The SessionStart hook automatically shows 2-3 top suggestions from the global ledger when starting a new session in a project directory.
 
-## Learning Tags
+## Learning Tags - IMMEDIATE TAGGING
 
-Use these tags in your responses to mark learnings:
+**CRITICAL**: Tag learnings IMMEDIATELY when they occur, not later. This ensures insights are captured before context compaction or session end.
+
+### When to Tag
+
+Tag immediately after:
+- **Fixing a bug** → What was wrong and why
+- **Making an architecture decision** → What you chose and why
+- **Discovering how something works** → The insight gained
+- **Finding a gotcha or pitfall** → What to avoid next time
+- **Identifying a reusable pattern** → The generalizable solution
+
+### Tag Format
 
 ```
-[DISCOVERY] New information about the codebase
-[DECISION] Architectural choices made
-[ERROR] Mistakes or gotchas to avoid
-[PATTERN] Reusable solutions identified
+[DISCOVERY] <specific insight with enough context to understand standalone>
+[DECISION] <what was decided and the rationale>
+[ERROR] <what went wrong and how to avoid it>
+[PATTERN] <reusable solution that applies beyond this specific case>
 ```
+
+### Examples
+
+```
+[DISCOVERY] PyRosetta DDG requires consistent repacking - use PackRotamersMover
+with identical TaskFactory for both WT and mutant, not FastRelax on mutant only.
+
+[DECISION] Using fcntl.flock() for file locking instead of a lock file approach
+because it's atomic and handles process crashes gracefully.
+
+[ERROR] Don't modify block files after creation - it breaks hash verification.
+Store mutable data (outcomes, confidence) in reinforcements.json instead.
+
+[PATTERN] For backwards compatibility when adding fields to Pydantic models,
+always use Optional with defaults and create a hash_dict() method that returns
+only the original fields for hash computation.
+```
+
+### Why Immediate Tagging Matters
+
+- Context compaction can happen anytime → Learnings in compacted context are lost
+- Session can end unexpectedly → No chance to extract later
+- Immediate tagging captures full context → Better quality learnings
+- System has safety nets but they're **backups**, not primary capture
 
 ## Confidence & Reinforcement
 
