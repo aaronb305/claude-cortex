@@ -27,40 +27,82 @@ from uuid import uuid4
 # If import fails (e.g., package not installed), we define local equivalents.
 # -----------------------------------------------------------------------------
 
-try:
-    # Add src directory to path for package imports
-    _src_path = Path(__file__).parent.parent / "src"
-    if _src_path.exists() and str(_src_path) not in sys.path:
-        sys.path.insert(0, str(_src_path))
+# Track availability of packages (set lazily)
+_PACKAGE_AVAILABLE: Optional[bool] = None
+_ANALYSIS_AVAILABLE: Optional[bool] = None
+_SearchIndex = None
+_TranscriptAnalyzer = None
+_SessionInsights = None
 
-    from continuous_claude.ledger import LearningCategory as _PkgLearningCategory
-    from continuous_claude.search import SearchIndex
-    from continuous_claude.analysis import TranscriptAnalyzer, SessionInsights
 
-    # Use package LearningCategory
-    ANALYSIS_AVAILABLE = True
-    class LearningCategory:
-        """Learning category constants matching the package enum."""
-        DISCOVERY = _PkgLearningCategory.DISCOVERY.value
-        DECISION = _PkgLearningCategory.DECISION.value
-        ERROR = _PkgLearningCategory.ERROR.value
-        PATTERN = _PkgLearningCategory.PATTERN.value
+def _init_package_imports():
+    """Lazily initialize package imports to avoid loading heavy deps at module load."""
+    global _PACKAGE_AVAILABLE, _SearchIndex
 
-    PACKAGE_AVAILABLE = True
-except ImportError:
-    # Package not available, define local constants
-    class LearningCategory:
-        """Learning category constants (standalone fallback)."""
-        DISCOVERY = "discovery"
-        DECISION = "decision"
-        ERROR = "error"
-        PATTERN = "pattern"
+    if _PACKAGE_AVAILABLE is not None:
+        return _PACKAGE_AVAILABLE
 
-    SearchIndex = None
-    TranscriptAnalyzer = None
-    SessionInsights = None
-    PACKAGE_AVAILABLE = False
-    ANALYSIS_AVAILABLE = False
+    try:
+        _src_path = Path(__file__).parent.parent / "src"
+        if _src_path.exists() and str(_src_path) not in sys.path:
+            sys.path.insert(0, str(_src_path))
+
+        from continuous_claude.search import SearchIndex
+        _SearchIndex = SearchIndex
+        _PACKAGE_AVAILABLE = True
+    except ImportError:
+        _SearchIndex = None
+        _PACKAGE_AVAILABLE = False
+
+    return _PACKAGE_AVAILABLE
+
+
+def _init_analysis_imports():
+    """Lazily initialize analysis imports (triggers ML dependencies)."""
+    global _ANALYSIS_AVAILABLE, _TranscriptAnalyzer, _SessionInsights
+
+    if _ANALYSIS_AVAILABLE is not None:
+        return _ANALYSIS_AVAILABLE
+
+    # First ensure package is available
+    if not _init_package_imports():
+        _ANALYSIS_AVAILABLE = False
+        return False
+
+    try:
+        from continuous_claude.analysis import TranscriptAnalyzer, SessionInsights
+        _TranscriptAnalyzer = TranscriptAnalyzer
+        _SessionInsights = SessionInsights
+        _ANALYSIS_AVAILABLE = True
+    except ImportError:
+        _TranscriptAnalyzer = None
+        _SessionInsights = None
+        _ANALYSIS_AVAILABLE = False
+
+    return _ANALYSIS_AVAILABLE
+
+
+# Define LearningCategory locally to avoid import dependency
+class LearningCategory:
+    """Learning category constants."""
+    DISCOVERY = "discovery"
+    DECISION = "decision"
+    ERROR = "error"
+    PATTERN = "pattern"
+
+
+def get_search_index(db_path):
+    """Get SearchIndex instance with lazy loading."""
+    _init_package_imports()
+    if _SearchIndex is None:
+        raise ImportError("SearchIndex not available")
+    return _SearchIndex(db_path)
+
+
+# For backwards compatibility - these will be evaluated when accessed
+# NOTE: Code should use _init_package_imports() or _init_analysis_imports() directly
+PACKAGE_AVAILABLE = None  # Placeholder - use _init_package_imports() instead
+ANALYSIS_AVAILABLE = None  # Placeholder - use _init_analysis_imports() instead
 
 
 # -----------------------------------------------------------------------------
@@ -423,17 +465,18 @@ def index_learnings_to_search(ledger_path: Path, learnings: list[dict]) -> None:
 
     Silently fails if the search module is not available or indexing fails,
     as search indexing should not block ledger operations.
+    Uses batch commits for better performance.
 
     Args:
         ledger_path: Path to the ledger directory.
         learnings: List of learning dictionaries to index.
     """
-    if not PACKAGE_AVAILABLE or SearchIndex is None:
+    if not _init_package_imports() or _SearchIndex is None:
         return
 
     try:
         db_path = get_search_db_path(ledger_path)
-        index = SearchIndex(db_path)
+        index = _SearchIndex(db_path)
 
         for learning in learnings:
             index.index_learning(
@@ -442,7 +485,10 @@ def index_learnings_to_search(ledger_path: Path, learnings: list[dict]) -> None:
                 content=learning["content"],
                 confidence=learning["confidence"],
                 source=learning.get("source"),
+                commit=False,  # Batch operation
             )
+        # Single commit at the end
+        index.connection.commit()
         index.close()
     except Exception:
         # Don't fail block creation if indexing fails
@@ -1010,7 +1056,7 @@ def analyze_session(
     Returns:
         Dictionary with insights, or None if analysis failed.
     """
-    if not ANALYSIS_AVAILABLE:
+    if not _init_analysis_imports():
         return None
 
     try:
@@ -1018,8 +1064,8 @@ def analyze_session(
         if not transcript_file.exists():
             return None
 
-        # Create analyzer
-        analyzer = TranscriptAnalyzer(use_llm=use_llm)
+        # Create analyzer (lazy import already done)
+        analyzer = _TranscriptAnalyzer(use_llm=use_llm)
 
         # Analyze transcript
         insights = analyzer.analyze_from_file(transcript_file, session_id)
@@ -1044,11 +1090,11 @@ def insights_to_learnings(insights_dict: dict) -> list[dict]:
     Returns:
         List of learning dicts ready for append_block()
     """
-    if not ANALYSIS_AVAILABLE or not insights_dict:
+    if not _init_analysis_imports() or not insights_dict:
         return []
 
     try:
-        insights = SessionInsights(
+        insights = _SessionInsights(
             session_id=insights_dict.get("session_id", "unknown"),
             what_worked=insights_dict.get("what_worked", []),
             what_failed=insights_dict.get("what_failed", []),
@@ -1067,7 +1113,10 @@ def insights_to_learnings(insights_dict: dict) -> list[dict]:
 __all__ = [
     # Constants
     "LearningCategory",
-    "PACKAGE_AVAILABLE",
+    # Lazy init functions (preferred)
+    "_init_package_imports",
+    "_init_analysis_imports",
+    "get_search_index",
     # Path utilities
     "get_ledger_path",
     "get_search_db_path",
@@ -1104,7 +1153,6 @@ __all__ = [
     "get_learnings_by_confidence",
     "get_learning_content",
     # Session analysis
-    "ANALYSIS_AVAILABLE",
     "analyze_session",
     "insights_to_learnings",
 ]

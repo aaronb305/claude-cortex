@@ -216,6 +216,8 @@ class Ledger:
     def _index_learnings(self, learnings: list[Learning]) -> None:
         """Add learnings to the search index.
 
+        Uses batch commits for better performance when adding multiple learnings.
+
         Args:
             learnings: List of learnings to index
         """
@@ -228,7 +230,10 @@ class Ledger:
                     content=learning.content,
                     confidence=learning.confidence,
                     source=learning.source,
+                    commit=False,  # Batch operation
                 )
+            # Single commit at the end
+            index.connection.commit()
         except Exception:
             # Don't fail block creation if indexing fails
             pass
@@ -587,6 +592,40 @@ class Ledger:
 
         return True
 
+    def _compute_effective_confidence_from_data(
+        self,
+        learning_data: dict,
+    ) -> float:
+        """Calculate effective confidence from already-loaded learning data.
+
+        Avoids re-reading reinforcements.json when we already have the data.
+
+        Args:
+            learning_data: The learning entry dict from reinforcements.json
+
+        Returns:
+            The effective confidence after applying decay
+        """
+        base_confidence = learning_data.get("confidence", 0.5)
+
+        # Get the last_applied timestamp, falling back to last_updated
+        last_applied_str = learning_data.get("last_applied") or learning_data.get("last_updated")
+
+        if not last_applied_str:
+            return base_confidence
+
+        try:
+            last_applied = datetime.fromisoformat(last_applied_str)
+            if last_applied.tzinfo is None:
+                last_applied = last_applied.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            return base_confidence
+
+        days_since_applied = (datetime.now(timezone.utc) - last_applied).days
+        decay_factor = max(0.5, 1.0 - (days_since_applied / 180.0))
+
+        return base_confidence * decay_factor
+
     def get_learnings_by_confidence(
         self,
         min_confidence: float = 0.0,
@@ -611,8 +650,8 @@ class Ledger:
 
         results = []
         for learning_id, data in learnings.items():
-            # Calculate effective confidence for this learning
-            effective_conf = self.get_effective_confidence(learning_id)
+            # Calculate effective confidence inline to avoid re-reading reinforcements
+            effective_conf = self._compute_effective_confidence_from_data(data)
 
             # Filter by effective confidence
             if effective_conf < min_confidence:

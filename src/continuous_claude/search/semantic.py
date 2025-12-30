@@ -1,28 +1,36 @@
-"""Semantic search using sentence-transformers and sqlite-vec.
+"""Semantic search using FastEmbed and sqlite-vec.
 
 This module provides semantic/vector search capabilities for learnings,
-complementing the FTS5-based keyword search. It uses sentence-transformers
+complementing the FTS5-based keyword search. It uses FastEmbed (ONNX-based)
 for embedding generation and sqlite-vec for efficient vector storage/search.
 
-Dependencies are optional - the module gracefully falls back if unavailable:
-    uv add sentence-transformers sqlite-vec
+FastEmbed is much lighter than sentence-transformers:
+- FastEmbed: ~187 MB (ONNX Runtime)
+- sentence-transformers: ~6.9 GB (PyTorch + CUDA)
+
+Dependencies:
+    uv add fastembed sqlite-vec
 """
 
+import hashlib
 import sqlite3
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
-# Track availability of optional dependencies
-_SENTENCE_TRANSFORMERS_AVAILABLE = False
+if TYPE_CHECKING:
+    from ..ledger import Ledger
+
+# Track availability of dependencies
+_FASTEMBED_AVAILABLE = False
 _SQLITE_VEC_AVAILABLE = False
 
 try:
-    from sentence_transformers import SentenceTransformer
-    _SENTENCE_TRANSFORMERS_AVAILABLE = True
+    from fastembed import TextEmbedding
+    _FASTEMBED_AVAILABLE = True
 except ImportError:
-    SentenceTransformer = None  # type: ignore
+    TextEmbedding = None  # type: ignore
 
 try:
     import sqlite_vec
@@ -41,14 +49,15 @@ class SemanticSearchResult:
 
 def is_available() -> bool:
     """Check if semantic search dependencies are available."""
-    return _SENTENCE_TRANSFORMERS_AVAILABLE and _SQLITE_VEC_AVAILABLE
+    return _FASTEMBED_AVAILABLE and _SQLITE_VEC_AVAILABLE
 
 
 class SemanticIndex:
-    """Semantic search index using sentence-transformers and sqlite-vec.
+    """Semantic search index using FastEmbed and sqlite-vec.
 
-    Uses the all-MiniLM-L6-v2 model which provides a good balance of
-    speed and quality for general-purpose semantic search.
+    Uses the BAAI/bge-small-en-v1.5 model which provides excellent quality
+    with a small footprint. FastEmbed uses ONNX Runtime for efficient
+    CPU-based inference without requiring PyTorch.
 
     Embeddings are stored in SQLite using the sqlite-vec extension,
     enabling efficient cosine similarity search.
@@ -62,13 +71,13 @@ class SemanticIndex:
                 for learning_id, score in results:
                     print(f"{learning_id}: {score}")
 
-    Falls back gracefully if dependencies are not installed:
-        uv add sentence-transformers sqlite-vec
+    Install dependencies:
+        uv add fastembed sqlite-vec
     """
 
-    # Model configuration
-    MODEL_NAME = "all-MiniLM-L6-v2"
-    EMBEDDING_DIM = 384  # Dimension for all-MiniLM-L6-v2
+    # Model configuration - bge-small-en-v1.5 is high quality and fast
+    MODEL_NAME = "BAAI/bge-small-en-v1.5"
+    EMBEDDING_DIM = 384  # Dimension for bge-small-en-v1.5
 
     def __init__(self, db_path: Optional[Path] = None):
         """Initialize the semantic index.
@@ -82,8 +91,8 @@ class SemanticIndex:
         """
         if not is_available():
             missing = []
-            if not _SENTENCE_TRANSFORMERS_AVAILABLE:
-                missing.append("sentence-transformers")
+            if not _FASTEMBED_AVAILABLE:
+                missing.append("fastembed")
             if not _SQLITE_VEC_AVAILABLE:
                 missing.append("sqlite-vec")
             raise ImportError(
@@ -98,7 +107,7 @@ class SemanticIndex:
 
         self.db_path = db_path
         self._connection: Optional[sqlite3.Connection] = None
-        self._model: Optional["SentenceTransformer"] = None
+        self._model: Optional["TextEmbedding"] = None
         self._in_context: bool = False
         self._create_tables()
 
@@ -131,10 +140,10 @@ class SemanticIndex:
         return self._connection
 
     @property
-    def model(self) -> "SentenceTransformer":
-        """Get or load the sentence transformer model (lazy loading)."""
+    def model(self) -> "TextEmbedding":
+        """Get or load the embedding model (lazy loading)."""
         if self._model is None:
-            self._model = SentenceTransformer(self.MODEL_NAME)
+            self._model = TextEmbedding(self.MODEL_NAME)
         return self._model
 
     def close(self) -> None:
@@ -179,8 +188,18 @@ class SemanticIndex:
 
     def _hash_content(self, content: str) -> str:
         """Create a simple hash of content for change detection."""
-        import hashlib
         return hashlib.md5(content.encode()).hexdigest()
+
+    def _embed_single(self, text: str) -> list[float]:
+        """Generate embedding for a single text."""
+        # FastEmbed returns a generator, get first (only) result
+        embeddings = list(self.model.embed([text]))
+        return embeddings[0].tolist()
+
+    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for multiple texts efficiently."""
+        embeddings = list(self.model.embed(texts))
+        return [emb.tolist() for emb in embeddings]
 
     def index_learning(self, learning_id: str, content: str) -> None:
         """Add or update a learning in the semantic index.
@@ -218,7 +237,7 @@ class SemanticIndex:
             )
 
         # Generate embedding
-        embedding = self.model.encode(content, convert_to_numpy=True).tolist()
+        embedding = self._embed_single(content)
 
         # Insert into mapping table
         cursor.execute(
@@ -235,6 +254,76 @@ class SemanticIndex:
         )
 
         self.connection.commit()
+
+    def index_learnings_batch(
+        self,
+        learnings: list[tuple[str, str]],
+        batch_size: int = 32,
+    ) -> int:
+        """Index multiple learnings efficiently with batch embedding.
+
+        Args:
+            learnings: List of (learning_id, content) tuples
+            batch_size: Number of embeddings to generate at once
+
+        Returns:
+            Number of learnings indexed
+        """
+        if not learnings:
+            return 0
+
+        cursor = self.connection.cursor()
+        indexed = 0
+
+        # Process in batches
+        for i in range(0, len(learnings), batch_size):
+            batch = learnings[i:i + batch_size]
+
+            # Check which need indexing (content changed)
+            to_index = []
+            for learning_id, content in batch:
+                content_hash = self._hash_content(content)
+                cursor.execute(
+                    "SELECT id, content_hash FROM learning_embeddings WHERE learning_id = ?",
+                    (learning_id,)
+                )
+                existing = cursor.fetchone()
+
+                if existing:
+                    if existing["content_hash"] == content_hash:
+                        continue  # Skip unchanged
+                    # Remove old entry
+                    cursor.execute("DELETE FROM vec_embeddings WHERE id = ?", (existing["id"],))
+                    cursor.execute("DELETE FROM learning_embeddings WHERE id = ?", (existing["id"],))
+
+                to_index.append((learning_id, content, content_hash))
+
+            if not to_index:
+                continue
+
+            # Batch embed
+            contents = [content for _, content, _ in to_index]
+            embeddings = self._embed_batch(contents)
+
+            # Insert all
+            for (learning_id, _, content_hash), embedding in zip(to_index, embeddings):
+                cursor.execute(
+                    "INSERT INTO learning_embeddings (learning_id, content_hash) VALUES (?, ?)",
+                    (learning_id, content_hash)
+                )
+                row_id = cursor.lastrowid
+
+                embedding_bytes = self._serialize_embedding(embedding)
+                cursor.execute(
+                    "INSERT INTO vec_embeddings (id, embedding) VALUES (?, ?)",
+                    (row_id, embedding_bytes)
+                )
+                indexed += 1
+
+            # Commit each batch
+            self.connection.commit()
+
+        return indexed
 
     def search(self, query: str, limit: int = 10) -> list[tuple[str, float]]:
         """Search for semantically similar learnings.
@@ -253,7 +342,7 @@ class SemanticIndex:
         cursor = self.connection.cursor()
 
         # Generate query embedding
-        query_embedding = self.model.encode(query, convert_to_numpy=True).tolist()
+        query_embedding = self._embed_single(query)
         query_bytes = self._serialize_embedding(query_embedding)
 
         # Search using sqlite-vec's KNN search
@@ -311,7 +400,7 @@ class SemanticIndex:
     def reindex_ledger(self, ledger: "Ledger") -> int:
         """Rebuild the entire semantic index from a ledger.
 
-        Clears all existing entries and reindexes all learnings.
+        Uses batch embedding for efficiency.
 
         Args:
             ledger: The Ledger instance to index from
@@ -326,13 +415,14 @@ class SemanticIndex:
         cursor.execute("DELETE FROM learning_embeddings")
         self.connection.commit()
 
-        count = 0
+        # Collect all learnings
+        learnings = []
         for block in ledger.get_all_blocks():
             for learning in block.learnings:
-                self.index_learning(learning.id, learning.content)
-                count += 1
+                learnings.append((learning.id, learning.content))
 
-        return count
+        # Use batch indexing for efficiency
+        return self.index_learnings_batch(learnings)
 
     def get_stats(self) -> dict:
         """Get statistics about the semantic index.

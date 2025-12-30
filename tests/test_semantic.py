@@ -33,7 +33,7 @@ class TestSemanticIndexWithoutDeps:
         error_msg = str(exc_info.value)
         assert "uv add" in error_msg
         # Should mention at least one missing dependency
-        assert "sentence-transformers" in error_msg or "sqlite-vec" in error_msg
+        assert "fastembed" in error_msg or "sqlite-vec" in error_msg
 
 
 class TestSemanticIndexWithDeps:
@@ -113,7 +113,7 @@ class TestSemanticIndexWithDeps:
             assert "model" in stats
             assert "embedding_dim" in stats
             assert "database_path" in stats
-            assert stats["model"] == "all-MiniLM-L6-v2"
+            assert stats["model"] == "BAAI/bge-small-en-v1.5"
             assert stats["embedding_dim"] == 384
 
     @pytest.mark.skipif(

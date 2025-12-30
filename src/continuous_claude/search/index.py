@@ -101,6 +101,7 @@ class SearchIndex:
         content: str,
         confidence: float,
         source: Optional[str] = None,
+        commit: bool = True,
     ) -> None:
         """Add a learning to the search index.
 
@@ -112,6 +113,7 @@ class SearchIndex:
             content: The full text content of the learning
             confidence: Confidence score (0.0 to 1.0)
             source: Optional source file or context
+            commit: Whether to commit after this insert (False for batch operations)
         """
         cursor = self.connection.cursor()
 
@@ -138,12 +140,14 @@ class SearchIndex:
             (learning_id, category, content, confidence, source or ""),
         )
 
-        self.connection.commit()
+        if commit:
+            self.connection.commit()
 
     def reindex_ledger(self, ledger: "Ledger") -> int:
         """Rebuild the entire search index from a ledger.
 
         Clears all existing entries and reindexes all learnings from the ledger.
+        Uses batch commits for better performance.
 
         Args:
             ledger: The Ledger instance to index from
@@ -159,15 +163,18 @@ class SearchIndex:
         count = 0
         for block in ledger.get_all_blocks():
             for learning in block.learnings:
+                # Use commit=False for batch operation
                 self.index_learning(
                     learning_id=learning.id,
                     category=learning.category.value,
                     content=learning.content,
                     confidence=learning.confidence,
                     source=learning.source,
+                    commit=False,
                 )
                 count += 1
 
+        # Single commit at the end for all inserts
         self.connection.commit()
         return count
 
