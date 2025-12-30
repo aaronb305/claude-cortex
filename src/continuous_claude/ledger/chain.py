@@ -10,10 +10,13 @@ from pathlib import Path
 from typing import Optional, TYPE_CHECKING, Generator
 
 from .models import Block, Learning, LearningCategory, OutcomeResult, compute_content_hash
+from .merkle import MerkleTree
+from .objects import ObjectStore
 
 if TYPE_CHECKING:
     from ..search import SearchIndex
     from ..search.index import SearchResult
+    from .crypto import KeyManager, VerifyResult
 
 
 @contextmanager
@@ -56,9 +59,20 @@ class Ledger:
         self.index_file = path / "index.json"
         self.reinforcements_file = path / "reinforcements.json"
         self.imports_file = path / "imports.json"  # Only for project ledgers
+        self.failed_indexing_file = path / "failed_indexing.json"
+        self.merkle_file = path / "merkle.json"
 
         # Search index is lazily initialized
-        self._search_index: Optional[SearchIndex] = None
+        self._search_index: Optional["SearchIndex"] = None
+
+        # Merkle tree is lazily initialized
+        self._merkle_tree: Optional[MerkleTree] = None
+
+        # Object store is lazily initialized
+        self._object_store: Optional[ObjectStore] = None
+
+        # Key manager is lazily initialized
+        self._key_manager: Optional["KeyManager"] = None
 
         self._ensure_structure()
 
@@ -75,6 +89,29 @@ class Ledger:
 
         if not self.is_global and not self.imports_file.exists():
             self._write_json(self.imports_file, {"imports": []})
+
+    @property
+    def object_store(self) -> ObjectStore:
+        """Get or create the object store for this ledger.
+
+        Returns:
+            ObjectStore instance for this ledger
+        """
+        if self._object_store is None:
+            self._object_store = ObjectStore(self.path)
+        return self._object_store
+
+    @property
+    def key_manager(self) -> "KeyManager":
+        """Get or create the key manager for this ledger.
+
+        Returns:
+            KeyManager instance for this ledger
+        """
+        if self._key_manager is None:
+            from .crypto import KeyManager
+            self._key_manager = KeyManager(self.path)
+        return self._key_manager
 
     def _read_json(self, path: Path) -> dict:
         """Read JSON from a file with shared lock."""
@@ -108,6 +145,7 @@ class Ledger:
         learnings: list[Learning],
         deduplicate: bool = True,
         merge_duplicates: bool = True,
+        sign: bool = True,
     ) -> Block:
         """Create and append a new block to the chain.
 
@@ -117,6 +155,7 @@ class Ledger:
             deduplicate: If True, filter out duplicate learnings before adding
             merge_duplicates: If True and deduplicate is True, boost confidence
                             of existing duplicates instead of just skipping
+            sign: If True and an identity exists, sign the block
 
         Returns:
             The newly created block (may have fewer learnings if duplicates removed)
@@ -130,7 +169,7 @@ class Ledger:
                 pass  # Continue to create block with empty learnings for session tracking
 
         # Lock index file for the entire operation to ensure atomicity
-        # Use a single lock context - no nested locking needed
+        # All operations must succeed or rollback to prevent orphan blocks
         with file_lock(self.index_file, exclusive=True):
             # Read index within lock context
             with open(self.index_file) as f:
@@ -143,59 +182,106 @@ class Ledger:
                 learnings=learnings,
             )
 
+            # Sign the block if requested and identity exists
+            if sign and self.key_manager.has_identity():
+                sig_result = self.key_manager.sign_block_hash(block.hash)
+                if sig_result:
+                    key_id, signature = sig_result
+                    block.author_key_id = key_id
+                    block.signature = signature
+
             # Write block to file directly - new block files are unique,
             # no contention risk since block ID is a UUID
             block_file = self.blocks_dir / f"{block.id}.json"
             with open(block_file, "w") as f:
                 json.dump(block.model_dump(mode="json"), f, indent=2, default=str)
 
-            # Update index atomically within the same lock context
-            index["head"] = block.id
-            index["blocks"].append({
-                "id": block.id,
-                "timestamp": block.timestamp.isoformat(),
-                "hash": block.hash,
-                "parent": head,
-            })
-            with open(self.index_file, "w") as f:
-                json.dump(index, f, indent=2, default=str)
+            try:
+                # Update index atomically within the same lock context
+                index["head"] = block.id
+                index["blocks"].append({
+                    "id": block.id,
+                    "timestamp": block.timestamp.isoformat(),
+                    "hash": block.hash,
+                    "parent": head,
+                })
+                with open(self.index_file, "w") as f:
+                    json.dump(index, f, indent=2, default=str)
 
-        # Update reinforcements with new learnings
-        if learnings:
-            self._register_learnings(learnings, block.id)
+                # Register learnings inside lock context to ensure atomicity
+                # If this fails, we rollback by deleting the block file
+                if learnings:
+                    self._register_learnings_internal(learnings, block.id)
+
+            except Exception:
+                # Rollback: delete the block file if index update or registration failed
+                if block_file.exists():
+                    block_file.unlink()
+                raise
+
+        # Update Merkle tree after successful block append (outside lock)
+        self.update_merkle_tree()
 
         return block
 
     def _register_learnings(self, learnings: list[Learning], block_id: str) -> None:
         """Register new learnings in the reinforcements file.
 
+        This method acquires its own lock on reinforcements.json.
+        For use within an existing lock context, use _register_learnings_internal.
+
         Args:
             learnings: List of learnings to register
             block_id: ID of the block containing these learnings
         """
         with file_lock(self.reinforcements_file, exclusive=True):
+            self._register_learnings_internal(learnings, block_id)
+
+    def _register_learnings_internal(self, learnings: list[Learning], block_id: str) -> None:
+        """Register new learnings in the reinforcements file (no locking).
+
+        This is the internal implementation that does not acquire a lock.
+        Called from append_block where we already hold the index lock, and
+        from _register_learnings which provides its own locking.
+
+        Also stores learning content in the ObjectStore for content-addressed
+        storage and deduplication.
+
+        Args:
+            learnings: List of learnings to register
+            block_id: ID of the block containing these learnings
+        """
+        # Read current reinforcements
+        if self.reinforcements_file.exists():
             with open(self.reinforcements_file) as f:
                 reinforcements = json.load(f)
+        else:
+            reinforcements = {"learnings": {}}
 
-            for learning in learnings:
-                # Ensure content_hash is computed
-                content_hash = learning.content_hash
-                if content_hash is None:
-                    content_hash = compute_content_hash(learning.content)
+        for learning in learnings:
+            # Store in object store first - returns the 16-char content hash
+            object_store_hash = self.object_store.store_learning(learning)
 
-                reinforcements["learnings"][learning.id] = {
-                    "category": learning.category.value,
-                    "confidence": learning.confidence,
-                    "outcome_count": len(learning.outcomes),
-                    "last_updated": datetime.now(timezone.utc).isoformat(),
-                    "last_applied": datetime.now(timezone.utc).isoformat(),
-                    "block_id": block_id,
-                    "content_hash": content_hash,
-                    "outcomes": [],  # Initialize empty outcomes list
-                }
+            # Ensure content_hash is computed (16-char version for dedup)
+            content_hash = learning.content_hash
+            if content_hash is None:
+                content_hash = compute_content_hash(learning.content)
 
-            with open(self.reinforcements_file, "w") as f:
-                json.dump(reinforcements, f, indent=2, default=str)
+            reinforcements["learnings"][learning.id] = {
+                "category": learning.category.value,
+                "content": learning.content,  # Keep for backwards compat
+                "confidence": learning.confidence,
+                "outcome_count": len(learning.outcomes),
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+                "last_applied": datetime.now(timezone.utc).isoformat(),
+                "block_id": block_id,
+                "content_hash": content_hash,
+                "object_store_hash": object_store_hash,  # Link to object store
+                "outcomes": [],  # Initialize empty outcomes list
+            }
+
+        with open(self.reinforcements_file, "w") as f:
+            json.dump(reinforcements, f, indent=2, default=str)
 
         # Also index learnings for full-text search
         self._index_learnings(learnings)
@@ -219,26 +305,120 @@ class Ledger:
         """Add learnings to the search index.
 
         Uses batch commits for better performance when adding multiple learnings.
+        Tracks failures for later retry.
 
         Args:
             learnings: List of learnings to index
         """
+        failed_ids: list[str] = []
         try:
             index = self._get_search_index()
             for learning in learnings:
-                index.index_learning(
-                    learning_id=learning.id,
-                    category=learning.category.value,
-                    content=learning.content,
-                    confidence=learning.confidence,
-                    source=learning.source,
-                    commit=False,  # Batch operation
-                )
+                try:
+                    index.index_learning(
+                        learning_id=learning.id,
+                        category=learning.category.value,
+                        content=learning.content,
+                        confidence=learning.confidence,
+                        source=learning.source,
+                        commit=False,  # Batch operation
+                    )
+                except Exception:
+                    failed_ids.append(learning.id)
             # Single commit at the end
             index.connection.commit()
         except Exception:
-            # Don't fail block creation if indexing fails
-            pass
+            # Complete failure - all learnings failed
+            failed_ids = [l.id for l in learnings]
+
+        # Track any failures for later retry
+        if failed_ids:
+            self._track_failed_indexing(failed_ids)
+
+    def _track_failed_indexing(self, learning_ids: list[str]) -> None:
+        """Track learning IDs that failed to index for later retry.
+
+        Args:
+            learning_ids: List of learning IDs that failed to index
+        """
+        with file_lock(self.failed_indexing_file, exclusive=True):
+            # Read existing failures
+            if self.failed_indexing_file.exists():
+                with open(self.failed_indexing_file) as f:
+                    data = json.load(f)
+            else:
+                data = {"failed": [], "last_updated": None}
+
+            # Add new failures (avoid duplicates)
+            existing = set(data.get("failed", []))
+            for lid in learning_ids:
+                if lid not in existing:
+                    data["failed"].append(lid)
+                    existing.add(lid)
+
+            data["last_updated"] = datetime.now(timezone.utc).isoformat()
+
+            # Write back
+            with open(self.failed_indexing_file, "w") as f:
+                json.dump(data, f, indent=2)
+
+    def _retry_failed_indexing(self) -> tuple[int, int]:
+        """Retry indexing for learnings that previously failed.
+
+        Returns:
+            Tuple of (success_count, remaining_failures)
+        """
+        if not self.failed_indexing_file.exists():
+            return 0, 0
+
+        with file_lock(self.failed_indexing_file, exclusive=True):
+            with open(self.failed_indexing_file) as f:
+                data = json.load(f)
+
+            failed_ids = data.get("failed", [])
+            if not failed_ids:
+                return 0, 0
+
+            success_count = 0
+            still_failed: list[str] = []
+
+            try:
+                index = self._get_search_index()
+
+                for learning_id in failed_ids:
+                    learning, _ = self.get_learning_by_id(learning_id, prefix_match=False)
+                    if not learning:
+                        # Learning no longer exists, remove from failures
+                        continue
+
+                    try:
+                        index.index_learning(
+                            learning_id=learning.id,
+                            category=learning.category.value,
+                            content=learning.content,
+                            confidence=learning.confidence,
+                            source=learning.source,
+                            commit=False,
+                        )
+                        success_count += 1
+                    except Exception:
+                        still_failed.append(learning_id)
+
+                # Commit all successful indexing
+                index.connection.commit()
+            except Exception:
+                # Complete failure - all remain failed
+                still_failed = failed_ids
+
+            # Update the failed indexing file
+            data["failed"] = still_failed
+            data["last_updated"] = datetime.now(timezone.utc).isoformat()
+            data["last_retry"] = datetime.now(timezone.utc).isoformat()
+
+            with open(self.failed_indexing_file, "w") as f:
+                json.dump(data, f, indent=2)
+
+        return success_count, len(still_failed)
 
     def search_learnings(
         self,
@@ -325,6 +505,104 @@ class Ledger:
                     return learning, block
 
         return None, None
+
+    def get_learning_by_content_hash(self, content_hash: str) -> Optional[dict]:
+        """Get full learning data from object store by content hash.
+
+        This provides O(1) access to learning content via the object store.
+        Falls back through multiple sources for backwards compatibility:
+        1. ObjectStore (new learnings)
+        2. reinforcements.json cache (existing learnings)
+        3. Block scan (oldest learnings without object_store_hash)
+
+        Args:
+            content_hash: The 16-char content hash to look up
+
+        Returns:
+            Dict with learning data if found, None otherwise.
+            Includes: content, category, source, confidence, etc.
+        """
+        # Try object store first (get_learning_data returns full dict)
+        obj_data = self.object_store.get_learning_data(content_hash)
+        if obj_data:
+            return obj_data
+
+        # Search reinforcements for matching content_hash
+        reinforcements = self._read_json(self.reinforcements_file)
+        learnings_data = reinforcements.get("learnings", {})
+
+        for learning_id, data in learnings_data.items():
+            if data.get("content_hash") == content_hash:
+                # Check if we have an object_store_hash
+                obj_hash = data.get("object_store_hash")
+                if obj_hash:
+                    obj_data = self.object_store.get_learning_data(obj_hash)
+                    if obj_data:
+                        return obj_data
+
+                # Fall back to reinforcements.json cache
+                return {
+                    "content": data.get("content"),
+                    "category": data.get("category"),
+                    "content_hash": content_hash,
+                    "confidence": data.get("confidence"),
+                    "source": None,  # Not stored in reinforcements
+                    "learning_id": learning_id,
+                }
+
+        # Final fallback: scan blocks for content (very slow, backwards compat only)
+        for block in self.get_all_blocks():
+            for learning in block.learnings:
+                if learning.content_hash == content_hash:
+                    return {
+                        "content": learning.content,
+                        "category": learning.category.value,
+                        "content_hash": content_hash,
+                        "confidence": learning.confidence,
+                        "source": learning.source,
+                        "learning_id": learning.id,
+                    }
+
+        return None
+
+    def get_learning_content(self, learning_id: str) -> Optional[str]:
+        """Get the content string for a learning by ID.
+
+        Uses multiple lookup strategies for efficiency and backwards compatibility:
+        1. ObjectStore via object_store_hash (fastest for new learnings)
+        2. reinforcements.json cache (fast, works for all learnings)
+        3. Block scan (slowest, backwards compat)
+
+        Args:
+            learning_id: ID of the learning (can be prefix)
+
+        Returns:
+            The learning content string, or None if not found
+        """
+        reinforcements = self._read_json(self.reinforcements_file)
+        learnings_data = reinforcements.get("learnings", {})
+
+        # Find matching learning
+        matched_data = None
+        for lid, data in learnings_data.items():
+            if lid.startswith(learning_id):
+                matched_data = data
+                break
+
+        if not matched_data:
+            # Fall back to block scan
+            learning, _ = self.get_learning_by_id(learning_id)
+            return learning.content if learning else None
+
+        # Try object store first (get() returns content string directly)
+        obj_hash = matched_data.get("object_store_hash")
+        if obj_hash:
+            content = self.object_store.get(obj_hash)
+            if content is not None:
+                return content
+
+        # Fall back to reinforcements cache
+        return matched_data.get("content")
 
     def record_outcome(
         self,
@@ -703,8 +981,14 @@ class Ledger:
 
         return blocks
 
-    def verify_chain(self) -> tuple[bool, list[str]]:
+    def verify_chain(
+        self,
+        verify_signatures: bool = False,
+    ) -> tuple[bool, list[str]]:
         """Verify the integrity of the chain.
+
+        Args:
+            verify_signatures: If True, also verify block signatures
 
         Returns:
             Tuple of (is_valid, list of error messages)
@@ -726,9 +1010,192 @@ class Ledger:
             if block.parent_block != prev_id:
                 errors.append(f"Block {block.id} has incorrect parent reference")
 
+            # Optionally verify signature
+            if verify_signatures:
+                result = self.verify_block_signature(block.id)
+                from .crypto import VerifyResult
+                if result == VerifyResult.INVALID:
+                    errors.append(f"Block {block.id} has invalid signature")
+                elif result == VerifyResult.KEY_NOT_FOUND:
+                    errors.append(f"Block {block.id} signed by unknown key {block.author_key_id}")
+                elif result == VerifyResult.ERROR:
+                    errors.append(f"Block {block.id} signature verification error")
+
             prev_id = block.id
 
         return len(errors) == 0, errors
+
+    def verify_block_signature(self, block_id: str) -> "VerifyResult":
+        """Verify a single block's signature.
+
+        Args:
+            block_id: ID of the block to verify
+
+        Returns:
+            VerifyResult indicating the verification outcome
+        """
+        from .crypto import VerifyResult
+
+        block = self.get_block(block_id)
+        if not block:
+            return VerifyResult.ERROR
+
+        if not block.signature or not block.author_key_id:
+            return VerifyResult.NO_SIGNATURE
+
+        return self.key_manager.verify_signature(
+            block.hash,
+            block.author_key_id,
+            block.signature,
+        )
+
+    def verify_all_signatures(self) -> dict[str, "VerifyResult"]:
+        """Verify signatures on all blocks.
+
+        Returns:
+            Dictionary mapping block_id to VerifyResult
+        """
+        from .crypto import VerifyResult
+
+        results: dict[str, VerifyResult] = {}
+        index = self._read_json(self.index_file)
+
+        for block_info in index.get("blocks", []):
+            block_id = block_info["id"]
+            results[block_id] = self.verify_block_signature(block_id)
+
+        return results
+
+    def build_merkle_tree(self) -> MerkleTree:
+        """Build a Merkle tree from all blocks in the ledger.
+
+        Returns the tree and saves it to merkle.json.
+
+        Returns:
+            The built MerkleTree instance
+        """
+        index = self._read_json(self.index_file)
+        blocks_info = index.get("blocks", [])
+
+        # Create list of (block_id, block_hash) tuples for the MerkleTree
+        leaves = [(b["id"], b["hash"]) for b in blocks_info]
+
+        tree = MerkleTree(leaves)
+
+        # Save to file
+        with file_lock(self.merkle_file, exclusive=True):
+            tree.save(self.merkle_file)
+
+        # Update index with merkle_root
+        self._update_merkle_root_in_index(tree.root_hash)
+
+        # Cache the tree
+        self._merkle_tree = tree
+
+        return tree
+
+    def get_merkle_root(self) -> Optional[str]:
+        """Get the current Merkle root hash.
+
+        Loads from merkle.json if available, otherwise builds tree.
+
+        Returns:
+            The Merkle root hash, or None if ledger is empty
+        """
+        # Check cached tree first
+        if self._merkle_tree is not None:
+            return self._merkle_tree.root_hash
+
+        # Try to load from file
+        if self.merkle_file.exists():
+            with file_lock(self.merkle_file, exclusive=False):
+                tree = MerkleTree.load(self.merkle_file)
+                if tree:
+                    self._merkle_tree = tree
+                    return tree.root_hash
+
+        # Build tree if not available
+        tree = self.build_merkle_tree()
+        return tree.root_hash
+
+    def update_merkle_tree(self) -> None:
+        """Update the Merkle tree after adding blocks.
+
+        Called automatically after append_block().
+        Invalidates the cached tree and rebuilds it.
+        """
+        # Invalidate cache
+        self._merkle_tree = None
+
+        # Rebuild the tree
+        self.build_merkle_tree()
+
+    def verify_merkle_tree(self) -> tuple[bool, list[str]]:
+        """Verify the Merkle tree matches the actual blocks.
+
+        Returns:
+            Tuple of (valid, list of error messages)
+        """
+        errors: list[str] = []
+
+        # Load the stored tree
+        if not self.merkle_file.exists():
+            # No merkle.json yet - this is okay for backwards compatibility
+            # Build it now and return success
+            self.build_merkle_tree()
+            return True, []
+
+        with file_lock(self.merkle_file, exclusive=False):
+            stored_tree = MerkleTree.load(self.merkle_file)
+
+        if not stored_tree:
+            errors.append("Failed to load merkle.json")
+            return False, errors
+
+        # Get current block data from index and rebuild tree
+        index = self._read_json(self.index_file)
+        blocks_info = index.get("blocks", [])
+        current_leaves = [(b["id"], b["hash"]) for b in blocks_info]
+        current_tree = MerkleTree(current_leaves)
+
+        # Check leaf count matches
+        if len(stored_tree) != len(current_leaves):
+            errors.append(
+                f"Block count mismatch: tree has {len(stored_tree)}, "
+                f"ledger has {len(current_leaves)}"
+            )
+
+        # Check root hashes match
+        if stored_tree.root_hash != current_tree.root_hash:
+            errors.append(
+                f"Merkle root mismatch: stored {stored_tree.root_hash}, "
+                f"computed {current_tree.root_hash}"
+            )
+
+        # Also verify the merkle_root in index matches
+        stored_root = index.get("merkle_root")
+        if stored_root and stored_root != stored_tree.root_hash:
+            errors.append(
+                f"Index merkle_root ({stored_root}) does not match "
+                f"merkle.json root ({stored_tree.root_hash})"
+            )
+
+        return len(errors) == 0, errors
+
+    def _update_merkle_root_in_index(self, merkle_root: Optional[str]) -> None:
+        """Update the merkle_root field in index.json.
+
+        Args:
+            merkle_root: The new Merkle root hash
+        """
+        with file_lock(self.index_file, exclusive=True):
+            with open(self.index_file) as f:
+                index = json.load(f)
+
+            index["merkle_root"] = merkle_root
+
+            with open(self.index_file, "w") as f:
+                json.dump(index, f, indent=2, default=str)
 
     def import_from_global(self, global_ledger: "Ledger", learning_ids: list[str]) -> None:
         """Import specific learnings from the global ledger.

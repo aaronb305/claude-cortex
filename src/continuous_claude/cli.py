@@ -11,12 +11,14 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .ledger import Ledger, LearningCategory
+from .ledger.merkle import MerkleTree
 from .runner import Runner, IterationLimit, CostLimit, NoNewLearnings
 from .runner.stop_conditions import TimeLimit, CompositeStopCondition
 from .search import SearchIndex
 from .handoff import Handoff, HandoffManager
 from .summaries import Summary, SummaryManager
 from .suggestions import LearningRecommender
+from .sync import LedgerSync, SyncStatus, export_ledger, import_ledger
 
 
 console = Console()
@@ -213,8 +215,25 @@ def list_learnings(
     default=None,
     help="Project directory (default: show global)",
 )
-def verify(project: Optional[Path]):
+@click.option(
+    "--merkle",
+    is_flag=True,
+    default=False,
+    help="Also verify Merkle tree integrity",
+)
+@click.option(
+    "--signatures",
+    is_flag=True,
+    default=False,
+    help="Verify block signatures",
+)
+def verify(project: Optional[Path], merkle: bool, signatures: bool):
     """Verify ledger chain integrity."""
+    from .ledger.crypto import (
+        is_crypto_available,
+        load_keystore_for_ledger,
+    )
+
     if project:
         ledger = get_project_ledger(project.resolve())
         console.print(f"[bold]Verifying project ledger:[/bold] {project}")
@@ -232,6 +251,96 @@ def verify(project: Optional[Path]):
         console.print("[bold red]Chain integrity errors found![/bold red]")
         for error in errors:
             console.print(f"  - {error}")
+
+    # Merkle tree verification
+    if merkle:
+        console.print("\n[bold]Verifying Merkle tree...[/bold]")
+        merkle_file = ledger.path / "merkle.json"
+
+        if not merkle_file.exists():
+            console.print("[yellow]No merkle.json found - tree not yet computed[/yellow]")
+        else:
+            # Load stored tree
+            stored_tree = MerkleTree.load(merkle_file)
+            if stored_tree is None:
+                console.print("[red]Failed to load merkle.json[/red]")
+            else:
+                # Rebuild tree from current blocks
+                blocks = ledger.get_all_blocks()
+                leaves = [(b.id, b.hash) for b in blocks]
+                computed_tree = MerkleTree(leaves)
+
+                if stored_tree.root_hash == computed_tree.root_hash:
+                    console.print("[bold green]Merkle tree verified![/bold green]")
+                    console.print(f"  Root hash: {stored_tree.root_hash[:16]}...")
+                    console.print(f"  Leaf count: {len(stored_tree)}")
+                else:
+                    console.print("[bold red]Merkle tree mismatch![/bold red]")
+                    console.print(f"  Stored root:   {stored_tree.root_hash[:16]}...")
+                    console.print(f"  Computed root: {computed_tree.root_hash[:16]}...")
+                    console.print("[dim]Run 'cclaude sync status' to regenerate merkle.json[/dim]")
+
+    # Signature verification
+    if signatures:
+        console.print("\n[bold]Verifying block signatures...[/bold]")
+
+        if not is_crypto_available():
+            console.print("[yellow]cryptography package not installed[/yellow]")
+            console.print("[dim]Install with: uv add cryptography[/dim]")
+            return
+
+        keystore = load_keystore_for_ledger(ledger.path)
+
+        if not keystore.trusted_keys:
+            console.print("[yellow]No trusted keys configured[/yellow]")
+            console.print("[dim]Add trusted keys with: cclaude keys trust <key_file>[/dim]")
+            return
+
+        import json
+        blocks = ledger.get_all_blocks()
+        verified = 0
+        unsigned = 0
+        failed = 0
+
+        for block in blocks:
+            # Check for signature file
+            sig_file = ledger.path / "blocks" / f"{block.id}.sig"
+            if not sig_file.exists():
+                unsigned += 1
+                continue
+
+            try:
+                with open(sig_file) as f:
+                    sig_data = json.load(f)
+
+                signer_key_id = sig_data.get("key_id")
+                signature = sig_data.get("signature")
+
+                if not signer_key_id or not signature:
+                    failed += 1
+                    continue
+
+                trusted_key = keystore.get_key(signer_key_id)
+                if trusted_key is None:
+                    failed += 1
+                    console.print(f"  [yellow]Block {block.id[:8]}: Unknown signer {signer_key_id}[/yellow]")
+                    continue
+
+                # Verify signature against block hash
+                if trusted_key.verify(signature, block.hash.encode('utf-8')):
+                    verified += 1
+                else:
+                    failed += 1
+                    console.print(f"  [red]Block {block.id[:8]}: Invalid signature[/red]")
+
+            except (json.JSONDecodeError, IOError) as e:
+                failed += 1
+                console.print(f"  [red]Block {block.id[:8]}: Error reading signature: {e}[/red]")
+
+        console.print(f"\n[bold]Signature verification results:[/bold]")
+        console.print(f"  Verified: [green]{verified}[/green]")
+        console.print(f"  Unsigned: [yellow]{unsigned}[/yellow]")
+        console.print(f"  Failed: [red]{failed}[/red]")
 
 
 @main.command()
@@ -444,34 +553,123 @@ def search(
     default=None,
     help="Project directory (default: global)",
 )
-def reindex(project: Optional[Path]):
+@click.option(
+    "--repair", "-r",
+    is_flag=True,
+    default=False,
+    help="Retry indexing for previously failed learnings only",
+)
+def reindex(project: Optional[Path], repair: bool):
     """Rebuild the search index from the ledger.
 
     Use this after importing learnings or if the index becomes corrupted.
+    Use --repair to retry only previously failed indexing operations.
     """
     # Get the appropriate ledger and search index
     if project:
         project = project.resolve()
         ledger = get_project_ledger(project)
         cache_dir = project / ".claude" / "cache"
-        console.print(f"[bold]Reindexing project ledger:[/bold] {project}")
+        console.print(f"[bold]{'Repairing' if repair else 'Reindexing'} project ledger:[/bold] {project}")
     else:
         ledger = get_global_ledger()
         cache_dir = Path.home() / ".claude" / "cache"
-        console.print("[bold]Reindexing global ledger[/bold]")
+        console.print(f"[bold]{'Repairing' if repair else 'Reindexing'} global ledger[/bold]")
 
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    with SearchIndex(cache_dir / "search.db") as index:
-        count = index.reindex_ledger(ledger)
-        console.print(f"[green]Successfully indexed {count} learnings[/green]")
+    if repair:
+        # Only retry failed indexing
+        success_count, remaining = ledger._retry_failed_indexing()
+        if success_count == 0 and remaining == 0:
+            console.print("[dim]No failed indexing to repair[/dim]")
+        else:
+            console.print(f"[green]Successfully recovered {success_count} learnings[/green]")
+            if remaining > 0:
+                console.print(f"[yellow]{remaining} learnings still failed to index[/yellow]")
+    else:
+        with SearchIndex(cache_dir / "search.db") as index:
+            count = index.reindex_ledger(ledger)
+            console.print(f"[green]Successfully indexed {count} learnings[/green]")
 
-        # Show stats
-        stats = index.get_stats()
-        if stats["by_category"]:
-            console.print("\n[bold]By category:[/bold]")
-            for cat, cnt in stats["by_category"].items():
-                console.print(f"  - {cat}: {cnt}")
+            # Show stats
+            stats = index.get_stats()
+            if stats["by_category"]:
+                console.print("\n[bold]By category:[/bold]")
+                for cat, cnt in stats["by_category"].items():
+                    console.print(f"  - {cat}: {cnt}")
+
+        # Clear failed indexing file after full reindex
+        if ledger.failed_indexing_file.exists():
+            ledger.failed_indexing_file.unlink()
+            console.print("[dim]Cleared failed indexing tracking[/dim]")
+
+
+@main.command()
+@click.option(
+    "--project", "-p",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project directory (default: global)",
+)
+def migrate(project: Optional[Path]):
+    """Migrate reinforcements.json to include content cache.
+
+    Populates the 'content' field in reinforcements.json for existing learnings
+    that were created before content caching was added. This improves SessionStart
+    performance from O(n*m) to O(1) for content lookups.
+    """
+    import json
+
+    # Get the appropriate ledger
+    if project:
+        project = project.resolve()
+        ledger = get_project_ledger(project)
+        console.print(f"[bold]Migrating project ledger:[/bold] {project}")
+    else:
+        ledger = get_global_ledger()
+        console.print("[bold]Migrating global ledger[/bold]")
+
+    # Read current reinforcements
+    reinforcements_file = ledger.reinforcements_file
+    if not reinforcements_file.exists():
+        console.print("[yellow]No reinforcements file found[/yellow]")
+        return
+
+    with open(reinforcements_file) as f:
+        reinforcements = json.load(f)
+
+    learnings_data = reinforcements.get("learnings", {})
+    migrated_count = 0
+    already_cached = 0
+
+    # Build learning_id -> content lookup from blocks
+    content_lookup: dict[str, str] = {}
+    for block in ledger.get_all_blocks():
+        for learning in block.learnings:
+            content_lookup[learning.id] = learning.content
+
+    # Update learnings missing content
+    for learning_id, data in learnings_data.items():
+        if "content" in data:
+            already_cached += 1
+            continue
+
+        content = content_lookup.get(learning_id)
+        if content:
+            data["content"] = content
+            migrated_count += 1
+
+    # Write back if any changes
+    if migrated_count > 0:
+        with open(reinforcements_file, "w") as f:
+            json.dump(reinforcements, f, indent=2, default=str)
+        console.print(f"[green]Migrated {migrated_count} learnings to include content cache[/green]")
+    else:
+        console.print("[dim]No migration needed[/dim]")
+
+    if already_cached > 0:
+        console.print(f"[dim]{already_cached} learnings already had cached content[/dim]")
 
 
 @main.group()
@@ -1469,6 +1667,773 @@ def analyze_metrics(project: Path, limit: int):
         failure_counts = Counter(all_failures)
         for failure, count in failure_counts.most_common(5):
             console.print(f"  ({count}x) {failure[:80]}...")
+
+
+# ============================================================================
+# Sync Commands
+# ============================================================================
+
+@main.group()
+def sync():
+    """Synchronize ledgers across machines."""
+    pass
+
+
+def _get_ledger_path(project: Optional[Path]) -> Path:
+    """Get ledger path for project or global."""
+    if project:
+        return project.resolve() / ".claude" / "ledger"
+    return Path.home() / ".claude" / "ledger"
+
+
+def _build_merkle_tree(ledger: Ledger) -> MerkleTree:
+    """Build a Merkle tree from ledger blocks."""
+    blocks = ledger.get_all_blocks()
+    leaves = [(b.id, b.hash) for b in blocks]
+    return MerkleTree(leaves)
+
+
+@sync.command("status")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project directory (default: global ledger)",
+)
+def sync_status(project: Optional[Path]):
+    """Show sync status and Merkle root for a ledger."""
+    ledger_path = _get_ledger_path(project)
+
+    if not ledger_path.exists():
+        console.print(f"[red]Ledger not found at {ledger_path}[/red]")
+        return
+
+    if project:
+        ledger = get_project_ledger(project.resolve())
+        console.print(f"[bold]Project ledger:[/bold] {project}")
+    else:
+        ledger = get_global_ledger()
+        console.print("[bold]Global ledger[/bold]")
+
+    # Get block count
+    blocks = ledger.get_all_blocks()
+    block_count = len(blocks)
+
+    # Build/update Merkle tree
+    tree = _build_merkle_tree(ledger)
+    merkle_file = ledger_path / "merkle.json"
+
+    # Check if merkle.json exists and matches
+    merkle_exists = merkle_file.exists()
+    merkle_current = False
+
+    if merkle_exists:
+        stored_tree = MerkleTree.load(merkle_file)
+        if stored_tree and stored_tree.root_hash == tree.root_hash:
+            merkle_current = True
+
+    # Get last modified time
+    index_file = ledger_path / "index.json"
+    if index_file.exists():
+        mtime = datetime.fromtimestamp(index_file.stat().st_mtime)
+        last_modified = mtime.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        last_modified = "N/A"
+
+    # Display status table
+    table = Table(title="Ledger Sync Status")
+    table.add_column("Property", style="cyan")
+    table.add_column("Value", style="white")
+
+    table.add_row("Location", str(ledger_path))
+    table.add_row("Block count", str(block_count))
+    table.add_row("Merkle root", tree.root_hash[:16] + "..." if tree.root_hash else "N/A (empty)")
+    table.add_row("Last modified", last_modified)
+    table.add_row("merkle.json exists", "[green]Yes[/green]" if merkle_exists else "[yellow]No[/yellow]")
+    table.add_row("merkle.json current", "[green]Yes[/green]" if merkle_current else "[yellow]No[/yellow]")
+
+    console.print(table)
+
+    # Save updated merkle.json if needed
+    if not merkle_current and block_count > 0:
+        tree.save(merkle_file)
+        console.print("\n[dim]Updated merkle.json with current state[/dim]")
+
+
+@sync.command("pull")
+@click.argument("remote", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project directory (default: global ledger)",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be synced without making changes",
+)
+@click.option(
+    "--no-verify",
+    is_flag=True,
+    help="Skip block hash verification",
+)
+def sync_pull(remote: Path, project: Optional[Path], dry_run: bool, no_verify: bool):
+    """Pull blocks from a remote ledger.
+
+    REMOTE is the path to the remote ledger directory.
+
+    Example:
+        cclaude sync pull /mnt/backup/ledger
+        cclaude sync pull ~/other-machine/ledger -p .
+    """
+    local_path = _get_ledger_path(project)
+
+    if not local_path.exists():
+        console.print(f"[red]Local ledger not found at {local_path}[/red]")
+        return
+
+    remote = Path(remote).resolve()
+
+    console.print(f"[bold]Pull from:[/bold] {remote}")
+    console.print(f"[bold]Pull to:[/bold] {local_path}")
+
+    try:
+        syncer = LedgerSync(local_path, remote)
+        info = syncer.get_sync_info()
+
+        # Display sync info
+        table = Table(title="Sync Comparison")
+        table.add_column("", style="cyan")
+        table.add_column("Local", style="green")
+        table.add_column("Remote", style="blue")
+
+        table.add_row("Block count", str(info.local_block_count), str(info.remote_block_count))
+        table.add_row(
+            "Head",
+            info.local_root[:12] + "..." if info.local_root else "N/A",
+            info.remote_root[:12] + "..." if info.remote_root else "N/A",
+        )
+        table.add_row(
+            "Status",
+            f"[bold]{info.status.value}[/bold]",
+            "",
+        )
+
+        console.print(table)
+
+        if info.missing_locally:
+            console.print(f"\n[bold]Blocks to pull:[/bold] {len(info.missing_locally)}")
+            for block_id in info.missing_locally[:10]:
+                console.print(f"  - {block_id[:12]}...")
+            if len(info.missing_locally) > 10:
+                console.print(f"  ... and {len(info.missing_locally) - 10} more")
+        else:
+            console.print("\n[dim]No blocks to pull - local is up to date[/dim]")
+            return
+
+        if dry_run:
+            console.print("\n[yellow]Dry run - no changes made[/yellow]")
+            return
+
+        # Perform pull
+        console.print("\n[bold]Pulling blocks...[/bold]")
+        result = syncer.pull(verify=not no_verify)
+
+        if result.blocks_imported:
+            console.print(f"[green]Successfully pulled {len(result.blocks_imported)} blocks[/green]")
+            for block_id in result.blocks_imported[:5]:
+                console.print(f"  + {block_id[:12]}...")
+            if len(result.blocks_imported) > 5:
+                console.print(f"  ... and {len(result.blocks_imported) - 5} more")
+
+        if result.errors:
+            console.print(f"\n[red]Errors ({len(result.errors)}):[/red]")
+            for error in result.errors:
+                console.print(f"  - {error}")
+
+        # Update Merkle tree
+        if result.blocks_imported:
+            if project:
+                ledger = get_project_ledger(project.resolve())
+            else:
+                ledger = get_global_ledger()
+            tree = _build_merkle_tree(ledger)
+            tree.save(local_path / "merkle.json")
+            console.print("[dim]Updated merkle.json[/dim]")
+
+    except (NotADirectoryError, ValueError) as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+@sync.command("push")
+@click.argument("remote", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project directory (default: global ledger)",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be synced without making changes",
+)
+@click.option(
+    "--no-verify",
+    is_flag=True,
+    help="Skip block hash verification",
+)
+def sync_push(remote: Path, project: Optional[Path], dry_run: bool, no_verify: bool):
+    """Push blocks to a remote ledger.
+
+    REMOTE is the path to the remote ledger directory.
+
+    Example:
+        cclaude sync push /mnt/backup/ledger
+        cclaude sync push ~/other-machine/ledger -p .
+    """
+    local_path = _get_ledger_path(project)
+
+    if not local_path.exists():
+        console.print(f"[red]Local ledger not found at {local_path}[/red]")
+        return
+
+    remote = Path(remote).resolve()
+
+    console.print(f"[bold]Push from:[/bold] {local_path}")
+    console.print(f"[bold]Push to:[/bold] {remote}")
+
+    try:
+        syncer = LedgerSync(local_path, remote)
+        info = syncer.get_sync_info()
+
+        # Display sync info
+        table = Table(title="Sync Comparison")
+        table.add_column("", style="cyan")
+        table.add_column("Local", style="green")
+        table.add_column("Remote", style="blue")
+
+        table.add_row("Block count", str(info.local_block_count), str(info.remote_block_count))
+        table.add_row(
+            "Head",
+            info.local_root[:12] + "..." if info.local_root else "N/A",
+            info.remote_root[:12] + "..." if info.remote_root else "N/A",
+        )
+        table.add_row(
+            "Status",
+            f"[bold]{info.status.value}[/bold]",
+            "",
+        )
+
+        console.print(table)
+
+        if info.missing_remotely:
+            console.print(f"\n[bold]Blocks to push:[/bold] {len(info.missing_remotely)}")
+            for block_id in info.missing_remotely[:10]:
+                console.print(f"  - {block_id[:12]}...")
+            if len(info.missing_remotely) > 10:
+                console.print(f"  ... and {len(info.missing_remotely) - 10} more")
+        else:
+            console.print("\n[dim]No blocks to push - remote is up to date[/dim]")
+            return
+
+        if dry_run:
+            console.print("\n[yellow]Dry run - no changes made[/yellow]")
+            return
+
+        # Perform push
+        console.print("\n[bold]Pushing blocks...[/bold]")
+        result = syncer.push(verify=not no_verify)
+
+        if result.blocks_to_export:
+            pushed_count = len(result.blocks_to_export) - len([e for e in result.errors if "Failed to export" in e])
+            console.print(f"[green]Successfully pushed {pushed_count} blocks[/green]")
+            for block_id in result.blocks_to_export[:5]:
+                console.print(f"  + {block_id[:12]}...")
+            if len(result.blocks_to_export) > 5:
+                console.print(f"  ... and {len(result.blocks_to_export) - 5} more")
+
+        if result.errors:
+            console.print(f"\n[red]Errors ({len(result.errors)}):[/red]")
+            for error in result.errors:
+                console.print(f"  - {error}")
+
+        # Update remote Merkle tree
+        if result.blocks_to_export and not result.errors:
+            remote_ledger = Ledger(remote)
+            tree = _build_merkle_tree(remote_ledger)
+            tree.save(remote / "merkle.json")
+            console.print("[dim]Updated remote merkle.json[/dim]")
+
+    except (NotADirectoryError, ValueError) as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+@sync.command("export")
+@click.argument("output", type=click.Path(path_type=Path))
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project directory (default: global ledger)",
+)
+def sync_export(output: Path, project: Optional[Path]):
+    """Export ledger to a tar.gz archive for transfer.
+
+    Creates a portable archive containing:
+    - All block files
+    - Chain index
+    - Reinforcements (confidence/outcome data)
+
+    Example:
+        cclaude sync export ~/ledger-backup.tar.gz
+        cclaude sync export ./project-ledger.tar.gz -p .
+    """
+    ledger_path = _get_ledger_path(project)
+
+    if not ledger_path.exists():
+        console.print(f"[red]Ledger not found at {ledger_path}[/red]")
+        return
+
+    output = Path(output).resolve()
+
+    # Ensure .tar.gz extension
+    if not str(output).endswith('.tar.gz'):
+        output = Path(str(output) + '.tar.gz')
+
+    console.print(f"[bold]Exporting ledger:[/bold] {ledger_path}")
+    console.print(f"[bold]To archive:[/bold] {output}")
+
+    try:
+        # Get block count for progress info
+        if project:
+            ledger = get_project_ledger(project.resolve())
+        else:
+            ledger = get_global_ledger()
+        blocks = ledger.get_all_blocks()
+
+        export_ledger(ledger_path, output)
+
+        # Get archive size
+        size_bytes = output.stat().st_size
+        if size_bytes < 1024:
+            size_str = f"{size_bytes} bytes"
+        elif size_bytes < 1024 * 1024:
+            size_str = f"{size_bytes / 1024:.1f} KB"
+        else:
+            size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
+
+        console.print(f"\n[green]Successfully exported {len(blocks)} blocks[/green]")
+        console.print(f"Archive size: {size_str}")
+        console.print(f"\n[dim]To import on another machine:[/dim]")
+        console.print(f"[dim]  cclaude sync import {output.name}[/dim]")
+
+    except FileExistsError:
+        console.print(f"[red]Output file already exists: {output}[/red]")
+        console.print("[dim]Remove it first or choose a different name[/dim]")
+    except Exception as e:
+        console.print(f"[red]Export failed: {e}[/red]")
+
+
+@sync.command("import")
+@click.argument("archive", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project directory (default: global ledger)",
+)
+def sync_import_cmd(archive: Path, project: Optional[Path]):
+    """Import ledger from a tar.gz archive.
+
+    Merges blocks from the archive into the target ledger.
+    Existing blocks are preserved; only new blocks are imported.
+
+    Example:
+        cclaude sync import ~/ledger-backup.tar.gz
+        cclaude sync import ./project-ledger.tar.gz -p .
+    """
+    ledger_path = _get_ledger_path(project)
+    archive = Path(archive).resolve()
+
+    console.print(f"[bold]Importing from:[/bold] {archive}")
+    console.print(f"[bold]To ledger:[/bold] {ledger_path}")
+
+    # Ensure ledger directory exists
+    ledger_path.mkdir(parents=True, exist_ok=True)
+
+    try:
+        result = import_ledger(archive, ledger_path)
+
+        if result.blocks_imported:
+            console.print(f"\n[green]Successfully imported {len(result.blocks_imported)} blocks[/green]")
+            for block_id in result.blocks_imported[:5]:
+                console.print(f"  + {block_id[:12]}...")
+            if len(result.blocks_imported) > 5:
+                console.print(f"  ... and {len(result.blocks_imported) - 5} more")
+        else:
+            console.print("\n[dim]No new blocks to import - ledger already up to date[/dim]")
+
+        if result.errors:
+            console.print(f"\n[red]Errors ({len(result.errors)}):[/red]")
+            for error in result.errors:
+                console.print(f"  - {error}")
+
+        # Update Merkle tree
+        if result.blocks_imported:
+            if project:
+                ledger = get_project_ledger(project.resolve())
+            else:
+                ledger = get_global_ledger()
+            tree = _build_merkle_tree(ledger)
+            tree.save(ledger_path / "merkle.json")
+            console.print("[dim]Updated merkle.json[/dim]")
+
+    except FileNotFoundError:
+        console.print(f"[red]Archive not found: {archive}[/red]")
+    except Exception as e:
+        console.print(f"[red]Import failed: {e}[/red]")
+
+
+# ============================================================================
+# Keys Commands (Cryptographic key management)
+# ============================================================================
+
+@main.group()
+def keys():
+    """Manage cryptographic keys for signing."""
+    pass
+
+
+@keys.command("generate")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project directory (default: global ledger)",
+)
+@click.option(
+    "--name",
+    prompt="Your name",
+    help="Name to associate with key",
+)
+@click.option(
+    "--email",
+    default=None,
+    help="Email (optional)",
+)
+def keys_generate(project: Optional[Path], name: str, email: Optional[str]):
+    """Generate a new signing keypair."""
+    from .ledger.crypto import (
+        is_crypto_available,
+        Identity,
+        get_identity_path,
+    )
+
+    if not is_crypto_available():
+        console.print("[red]cryptography package not installed[/red]")
+        console.print("[dim]Install with: uv add cryptography[/dim]")
+        return
+
+    ledger_path = _get_ledger_path(project)
+    identity_path = get_identity_path(ledger_path)
+
+    # Check if identity already exists
+    if (identity_path / "identity.json").exists():
+        console.print("[yellow]Identity already exists at this location[/yellow]")
+        console.print(f"[dim]Path: {identity_path}[/dim]")
+        if not click.confirm("Overwrite existing identity?"):
+            return
+
+    # Create identity and generate keypair
+    import socket
+    identity = Identity(
+        name=name,
+        email=email,
+        machine=socket.gethostname(),
+    )
+    identity.generate_keypair()
+
+    # Save identity
+    identity.save(identity_path)
+
+    console.print(f"\n[bold green]Generated new signing keypair[/bold green]")
+    console.print(f"[bold]Key ID:[/bold] {identity.key_id}")
+    console.print(f"[bold]Name:[/bold] {identity.name}")
+    console.print(f"[bold]Machine:[/bold] {identity.machine}")
+    console.print(f"[bold]Location:[/bold] {identity_path}")
+
+    console.print(f"\n[bold]To share your public key:[/bold]")
+    console.print(f"  cclaude keys export -o my_key.pem")
+    console.print(f"\n[bold]To add a trusted key:[/bold]")
+    console.print(f"  cclaude keys trust <key_file.pem>")
+
+
+@keys.command("show")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project directory (default: global ledger)",
+)
+def keys_show(project: Optional[Path]):
+    """Show this ledger's public key."""
+    from .ledger.crypto import (
+        is_crypto_available,
+        load_identity_for_ledger,
+        get_identity_path,
+    )
+
+    if not is_crypto_available():
+        console.print("[red]cryptography package not installed[/red]")
+        console.print("[dim]Install with: uv add cryptography[/dim]")
+        return
+
+    ledger_path = _get_ledger_path(project)
+    identity = load_identity_for_ledger(ledger_path)
+
+    if identity is None:
+        console.print("[yellow]No identity configured for this ledger[/yellow]")
+        console.print(f"[dim]Generate one with: cclaude keys generate[/dim]")
+        return
+
+    console.print(f"[bold]Key ID:[/bold] {identity.key_id}")
+    console.print(f"[bold]Name:[/bold] {identity.name}")
+    if identity.email:
+        console.print(f"[bold]Email:[/bold] {identity.email}")
+    console.print(f"[bold]Machine:[/bold] {identity.machine}")
+    console.print(f"[bold]Created:[/bold] {identity.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # Show public key
+    if identity._public_key is not None:
+        console.print(f"\n[bold]Public Key (PEM):[/bold]")
+        console.print(identity.get_public_key_pem())
+
+
+@keys.command("export")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project directory (default: global ledger)",
+)
+@click.option(
+    "-o", "--output",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Output file (default: stdout)",
+)
+def keys_export(project: Optional[Path], output: Optional[Path]):
+    """Export public key in PEM format for sharing."""
+    from .ledger.crypto import (
+        is_crypto_available,
+        load_identity_for_ledger,
+    )
+
+    if not is_crypto_available():
+        console.print("[red]cryptography package not installed[/red]")
+        console.print("[dim]Install with: uv add cryptography[/dim]")
+        return
+
+    ledger_path = _get_ledger_path(project)
+    identity = load_identity_for_ledger(ledger_path)
+
+    if identity is None:
+        console.print("[yellow]No identity configured for this ledger[/yellow]")
+        console.print(f"[dim]Generate one with: cclaude keys generate[/dim]")
+        return
+
+    if identity._public_key is None:
+        console.print("[red]No public key available[/red]")
+        return
+
+    pem_data = identity.get_public_key_pem()
+
+    if output:
+        output = Path(output).resolve()
+        with open(output, 'w') as f:
+            f.write(pem_data)
+        console.print(f"[green]Public key exported to {output}[/green]")
+        console.print(f"[bold]Key ID:[/bold] {identity.key_id}")
+        console.print(f"[bold]Owner:[/bold] {identity.name}")
+    else:
+        # Output to stdout
+        console.print(pem_data)
+
+
+@keys.command("trust")
+@click.argument("key_file", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project directory (default: global ledger)",
+)
+@click.option(
+    "--name",
+    prompt="Key owner name",
+    help="Name of key owner",
+)
+@click.option(
+    "--level",
+    type=click.Choice(["full", "marginal", "none"]),
+    default="marginal",
+    help="Trust level (default: marginal)",
+)
+def keys_trust(key_file: Path, project: Optional[Path], name: str, level: str):
+    """Add a trusted public key from a PEM file."""
+    from .ledger.crypto import (
+        is_crypto_available,
+        load_keystore_for_ledger,
+        get_keystore_path,
+        TrustLevel,
+    )
+
+    if not is_crypto_available():
+        console.print("[red]cryptography package not installed[/red]")
+        console.print("[dim]Install with: uv add cryptography[/dim]")
+        return
+
+    ledger_path = _get_ledger_path(project)
+    keystore = load_keystore_for_ledger(ledger_path)
+
+    # Read the PEM file
+    key_file = Path(key_file).resolve()
+    with open(key_file) as f:
+        pem_data = f.read()
+
+    # Validate it's a valid public key
+    try:
+        trust_level = TrustLevel(level)
+        trusted_key = keystore.add_key(
+            name=name,
+            public_key_pem=pem_data,
+            trust_level=trust_level,
+        )
+    except Exception as e:
+        console.print(f"[red]Failed to add key: {e}[/red]")
+        return
+
+    # Save updated keystore
+    keystore.save(get_keystore_path(ledger_path))
+
+    console.print(f"\n[bold green]Added trusted key[/bold green]")
+    console.print(f"[bold]Key ID:[/bold] {trusted_key.key_id}")
+    console.print(f"[bold]Name:[/bold] {trusted_key.name}")
+    console.print(f"[bold]Trust Level:[/bold] {trusted_key.trust_level.value}")
+    console.print(f"[bold]Added:[/bold] {trusted_key.added_at.strftime('%Y-%m-%d %H:%M:%S')}")
+
+
+@keys.command("list")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project directory (default: global ledger)",
+)
+def keys_list(project: Optional[Path]):
+    """List all trusted keys."""
+    from .ledger.crypto import (
+        is_crypto_available,
+        load_keystore_for_ledger,
+        load_identity_for_ledger,
+    )
+
+    if not is_crypto_available():
+        console.print("[red]cryptography package not installed[/red]")
+        console.print("[dim]Install with: uv add cryptography[/dim]")
+        return
+
+    ledger_path = _get_ledger_path(project)
+
+    # Show own identity first
+    identity = load_identity_for_ledger(ledger_path)
+    if identity:
+        console.print(f"[bold]Your Identity:[/bold]")
+        console.print(f"  Key ID: {identity.key_id}")
+        console.print(f"  Name: {identity.name}")
+        console.print(f"  Machine: {identity.machine}")
+        console.print("")
+
+    # List trusted keys
+    keystore = load_keystore_for_ledger(ledger_path)
+    trusted_keys = keystore.list_keys()
+
+    if not trusted_keys:
+        console.print("[dim]No trusted keys configured[/dim]")
+        console.print("[dim]Add trusted keys with: cclaude keys trust <key_file>[/dim]")
+        return
+
+    table = Table(title=f"Trusted Keys ({len(trusted_keys)})")
+    table.add_column("Key ID", style="cyan", width=16)
+    table.add_column("Name", style="white")
+    table.add_column("Trust Level", style="yellow")
+    table.add_column("Added At", style="dim")
+    table.add_column("Vouched By", style="dim")
+
+    for key in trusted_keys:
+        trust_style = {
+            "full": "[green]full[/green]",
+            "marginal": "[yellow]marginal[/yellow]",
+            "none": "[red]none[/red]",
+        }.get(key.trust_level.value, key.trust_level.value)
+
+        table.add_row(
+            key.key_id,
+            key.name,
+            trust_style,
+            key.added_at.strftime("%Y-%m-%d"),
+            key.vouched_by[:8] + "..." if key.vouched_by else "-",
+        )
+
+    console.print(table)
+
+
+@keys.command("revoke")
+@click.argument("key_id")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Project directory (default: global ledger)",
+)
+def keys_revoke(key_id: str, project: Optional[Path]):
+    """Remove a trusted key."""
+    from .ledger.crypto import (
+        is_crypto_available,
+        load_keystore_for_ledger,
+        get_keystore_path,
+    )
+
+    if not is_crypto_available():
+        console.print("[red]cryptography package not installed[/red]")
+        console.print("[dim]Install with: uv add cryptography[/dim]")
+        return
+
+    ledger_path = _get_ledger_path(project)
+    keystore = load_keystore_for_ledger(ledger_path)
+
+    # Find the key first to show info
+    key = keystore.get_key(key_id)
+    if key is None:
+        console.print(f"[red]Key {key_id} not found[/red]")
+        return
+
+    console.print(f"[bold]Revoking key:[/bold]")
+    console.print(f"  Key ID: {key.key_id}")
+    console.print(f"  Name: {key.name}")
+    console.print(f"  Trust Level: {key.trust_level.value}")
+
+    if not click.confirm("Are you sure you want to revoke this key?"):
+        console.print("[dim]Cancelled[/dim]")
+        return
+
+    if keystore.remove_key(key_id):
+        keystore.save(get_keystore_path(ledger_path))
+        console.print(f"[green]Key {key.key_id} has been revoked[/green]")
+    else:
+        console.print(f"[red]Failed to revoke key[/red]")
 
 
 if __name__ == "__main__":

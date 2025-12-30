@@ -17,26 +17,11 @@ from shared import (
     extract_and_store_learnings,
     extract_assistant_messages,
     get_learning_content,
+    get_session_learnings_path,
+    load_session_learnings,
     read_json,
     read_transcript,
 )
-
-
-def get_session_learnings_path(cwd: str) -> Path:
-    """Get the path to the session learnings tracking file."""
-    project_dir = Path(cwd) if cwd else Path.cwd()
-    return project_dir / ".claude" / "session_learnings.json"
-
-
-def load_session_learnings(path: Path) -> dict:
-    """Load session learnings data."""
-    try:
-        if path.exists():
-            with open(path) as f:
-                return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        pass
-    return {"referenced_learnings": [], "last_updated": None}
 
 
 def get_learnings_without_recent_outcomes(

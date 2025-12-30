@@ -7,12 +7,18 @@ A blockchain-style ledger memory system with performance-based reinforcement lea
 ### Core Capabilities
 
 - **Blockchain-style Ledger**: Immutable knowledge storage with SHA-256 hash verification
+- **Merkle Tree Verification**: O(log n) sync and tamper detection using binary merkle trees
+- **Cryptographic Signatures**: Ed25519 block signing with trust-based key management
+- **Content-Addressed Storage**: Automatic deduplication via content hashing in `objects/` directory
+- **Distributed Sync**: Pull/push between ledgers with Merkle-based diff detection
 - **Confidence Scoring**: Reinforcement learning that adjusts learning reliability based on outcomes
 - **Dual Ledger System**: Global (`~/.claude/ledger/`) and project-specific (`.claude/ledger/`) knowledge bases
+- **Ledger Sync**: Export/import archives for backup and transfer between machines
 - **Autonomous Execution**: Enhanced prompts and hooks for continuous, uninterrupted work
 - **Learning Extraction**: Automatic capture of discoveries, decisions, errors, and patterns
 - **Handoff System**: Work-in-progress state capture for seamless session continuity
 - **Full-Text Search**: SQLite FTS5 search across all learnings with relevance ranking
+- **Session Analysis**: LLM-powered Braintrust-like insights from session transcripts
 
 ### Knowledge Categories
 
@@ -76,12 +82,14 @@ uv run cclaude run "Add authentication" -p . --max-iterations 10
 
 # List learnings (filter by confidence)
 uv run cclaude list --min-confidence 0.7
+uv run cclaude list --show-decay          # Show confidence decay info
 
 # Show learning details
 uv run cclaude show <learning-id>
 
 # Record outcome (updates confidence)
 uv run cclaude outcome <learning-id> -r success -c "Applied successfully"
+uv run cclaude outcomes pending           # View learnings needing feedback
 
 # Promote high-confidence learnings to global
 uv run cclaude promote -p . --threshold 0.8
@@ -93,17 +101,45 @@ uv run cclaude verify
 uv run cclaude search "authentication JWT"
 uv run cclaude search "pattern" --category pattern
 
-# Rebuild search index
+# Rebuild/repair search index
 uv run cclaude reindex
+uv run cclaude reindex --repair           # Retry failed indexing only
 
-# Create a handoff (work-in-progress capture)
+# Handoffs (work-in-progress capture)
 uv run cclaude handoff create --completed "Finished auth" --pending "Add tests"
-
-# Show latest handoff
 uv run cclaude handoff show
-
-# List all handoffs
 uv run cclaude handoff list
+
+# Summaries
+uv run cclaude summary show
+uv run cclaude summary list
+
+# Cross-project suggestions
+uv run cclaude suggest                    # Show relevant learnings from global
+uv run cclaude suggest --apply <id>       # Import suggestion to project
+
+# Content cache migration (performance)
+uv run cclaude migrate
+
+# Session analysis (Braintrust-like insights)
+uv run cclaude analyze session transcript.md --save-learnings
+uv run cclaude analyze metrics -p .
+
+# Sync between ledgers
+uv run cclaude sync status                # Check sync state
+uv run cclaude sync pull /path/to/remote  # Pull missing blocks
+uv run cclaude sync push /path/to/remote  # Push local blocks
+uv run cclaude sync export backup.tar.gz  # Export to archive
+uv run cclaude sync import backup.tar.gz  # Import from archive
+
+# Key management (Ed25519 signing)
+uv run cclaude keys generate --name "You" # Create keypair
+uv run cclaude keys trust key.pem --name "Alice"  # Add trusted key
+uv run cclaude keys list                  # List trusted keys
+uv run cclaude keys revoke <key_id>       # Revoke a key
+
+# Verification with signatures
+uv run cclaude verify --merkle --signatures
 ```
 
 ### Agents
@@ -140,6 +176,7 @@ All agents use **opus** as the default model for maximum capability.
 | `handoff-management` | Save/load work-in-progress state |
 | `search-learnings` | Full-text search across learnings |
 | `continuous-execution` | Run autonomous iteration mode |
+| `outcome-prompt` | Suggest outcome recording for applied learnings |
 
 ## Architecture
 
@@ -147,8 +184,17 @@ All agents use **opus** as the default model for maximum capability.
 ~/.claude/
 ├── ledger/                    # Global ledger (cross-project knowledge)
 │   ├── blocks/*.json          # Immutable learning blocks
+│   ├── objects/               # Content-addressed storage (sharded by hash)
+│   │   └── ab/ab12cd34.json   # Content stored by 16-char hash
 │   ├── index.json             # Chain index with head pointer
-│   └── reinforcements.json    # Confidence scores and outcomes
+│   ├── reinforcements.json    # Confidence scores, outcomes, content cache
+│   ├── merkle.json            # Merkle tree for efficient sync/verification
+│   ├── identity.json          # This ledger's public key + identity
+│   ├── .private_key           # Private signing key (mode 600)
+│   └── trusted_keys.json      # Trusted public keys from other users
+├── cache/
+│   ├── search.db              # SQLite FTS5 search index
+│   └── semantic.db            # Semantic search vectors (optional)
 ├── hooks/
 │   ├── session_start.py       # Inject ledger context
 │   ├── post_tool_use.py       # Continuation nudges
@@ -158,36 +204,35 @@ All agents use **opus** as the default model for maximum capability.
 
 project/.claude/
 ├── ledger/                    # Project-specific ledger
-└── handoffs/                  # Work-in-progress state captures
-    └── <session>/handoff-<timestamp>.md
-
-~/.claude/
-├── cache/
-│   └── search.db              # SQLite FTS5 search index
+│   ├── merkle.json            # Merkle tree for this ledger
+│   ├── identity.json          # Project-specific signing identity
+│   └── trusted_keys.json      # Trusted keys for this project
+├── handoffs/                  # Work-in-progress state captures
+│   └── <session>/handoff-<timestamp>.md
+├── summaries/                 # Session summaries
+│   └── <session>/summary-<timestamp>.json
+└── insights/                  # LLM-powered analysis results
+    └── <session>/insights-<timestamp>.json
 
 ~/projects/continuous-claude-custom/
 ├── .claude-plugin/plugin.json # Plugin manifest
 ├── agents/                    # Custom agents (11 total, opus model)
-│   ├── continuous-runner.md   # Autonomous iteration manager
-│   ├── knowledge-retriever.md # Ledger search specialist
-│   ├── learning-extractor.md  # Insight extraction specialist
-│   ├── session-continuity.md  # Session transition manager
-│   └── outcome-tracker.md     # Confidence score updater
+├── skills/                    # User-invocable skills (6)
 ├── hooks/                     # Hook implementations
-├── skills/                    # User-invocable skills
 ├── src/continuous_claude/     # Python package
 │   ├── ledger/                # Blockchain ledger implementation
 │   │   ├── chain.py           # Ledger management + search integration
-│   │   └── models.py          # Learning, Block, Outcome models
+│   │   ├── models.py          # Learning, Block, Outcome models
+│   │   ├── merkle.py          # Merkle tree for efficient sync
+│   │   ├── objects.py         # Content-addressed object store
+│   │   └── crypto.py          # Ed25519 signing and verification
 │   ├── runner/                # Continuous execution
-│   │   ├── loop.py            # Main execution loop + autonomy prompts
-│   │   ├── context.py         # Context builder
-│   │   └── stop_conditions.py # Termination logic
 │   ├── handoff/               # Work-in-progress state capture
-│   │   ├── models.py          # Handoff dataclass
-│   │   └── manager.py         # Handoff creation/loading
-│   ├── search/                # Full-text search
-│   │   └── index.py           # SQLite FTS5 implementation
+│   ├── summaries/             # Session summary storage
+│   ├── search/                # Full-text + semantic search
+│   ├── suggestions/           # Cross-project recommendations
+│   ├── analysis/              # LLM-powered session analysis
+│   ├── sync.py                # Ledger sync protocol (export/import)
 │   └── cli.py                 # Command-line interface
 └── install.sh                 # Installation script
 ```
@@ -282,13 +327,18 @@ uv run cclaude --help
 
 | Feature | Continuous Claude Custom | Other Systems |
 |---------|-------------------------|---------------|
-| Data integrity | SHA-256 blockchain | None |
+| Data integrity | SHA-256 blockchain + Merkle tree | None |
+| Cryptographic signing | Ed25519 with trust levels | None |
+| Content deduplication | Content-addressed storage | None |
+| Distributed sync | Merkle-based pull/push | None |
 | Confidence scoring | Yes (reinforcement) | No |
 | Global knowledge | Yes (promotion) | Project-only |
 | Outcome tracking | Yes | No |
 | Autonomous execution | Enhanced prompts + hooks | Basic |
 | Handoffs (WIP state) | Yes | Some |
 | Full-text search | SQLite FTS5 | Limited |
+| Sync/export | Archive-based transfer | None |
+| Session analysis | LLM-powered insights | None |
 
 ## License
 

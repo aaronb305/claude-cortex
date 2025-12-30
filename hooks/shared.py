@@ -106,6 +106,61 @@ ANALYSIS_AVAILABLE = None  # Placeholder - use _init_analysis_imports() instead
 
 
 # -----------------------------------------------------------------------------
+# Session learnings utilities
+# -----------------------------------------------------------------------------
+
+def get_session_learnings_path(cwd: str) -> Path:
+    """Get the path to the session learnings tracking file.
+
+    Args:
+        cwd: Current working directory.
+
+    Returns:
+        Path to the session_learnings.json file.
+    """
+    project_dir = Path(cwd) if cwd else Path.cwd()
+    claude_dir = project_dir / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    return claude_dir / "session_learnings.json"
+
+
+def load_session_learnings(path: Path) -> dict:
+    """Load existing session learnings data with file locking.
+
+    Args:
+        path: Path to the session_learnings.json file.
+
+    Returns:
+        Session learnings data dict with referenced_learnings and last_updated.
+    """
+    try:
+        if path.exists():
+            with file_lock(path, exclusive=False):
+                with open(path) as f:
+                    return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        pass
+    return {"referenced_learnings": [], "last_updated": None}
+
+
+def save_session_learnings(path: Path, data: dict) -> None:
+    """Save session learnings data with file locking.
+
+    Args:
+        path: Path to the session_learnings.json file.
+        data: Session learnings data to save.
+    """
+    data["last_updated"] = datetime.now(timezone.utc).isoformat()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with file_lock(path, exclusive=True):
+            with open(path, "w") as f:
+                json.dump(data, f, indent=2)
+    except IOError:
+        pass  # Silently fail if we can't write
+
+
+# -----------------------------------------------------------------------------
 # Path utilities
 # -----------------------------------------------------------------------------
 
@@ -570,6 +625,7 @@ def append_block(
         for learning in learnings:
             reinforcements["learnings"][learning["id"]] = {
                 "category": learning["category"],
+                "content": learning["content"],  # Cache content for O(1) lookup
                 "confidence": learning["confidence"],
                 "outcome_count": 0,
                 "last_updated": timestamp,
@@ -1012,7 +1068,11 @@ def get_learnings_by_confidence(
 
 
 def get_learning_content(ledger_path: Path, learning_id: str) -> Optional[str]:
-    """Get the actual content of a learning from blocks.
+    """Get the actual content of a learning.
+
+    First checks the reinforcements.json cache for O(1) lookup.
+    Falls back to scanning blocks for backwards compatibility with
+    learnings created before content caching was added.
 
     Args:
         ledger_path: Path to the ledger directory.
@@ -1021,6 +1081,15 @@ def get_learning_content(ledger_path: Path, learning_id: str) -> Optional[str]:
     Returns:
         The learning content, or None if not found.
     """
+    # First try the fast path: check reinforcements.json cache
+    reinforcements_file = ledger_path / "reinforcements.json"
+    if reinforcements_file.exists():
+        reinforcements = read_json(reinforcements_file)
+        learning_data = reinforcements.get("learnings", {}).get(learning_id)
+        if learning_data and "content" in learning_data:
+            return learning_data["content"]
+
+    # Fallback: scan blocks for backwards compatibility
     blocks_dir = ledger_path / "blocks"
     if not blocks_dir.exists():
         return None
@@ -1185,6 +1254,10 @@ __all__ = [
     "_init_package_imports",
     "_init_analysis_imports",
     "get_search_index",
+    # Session learnings utilities
+    "get_session_learnings_path",
+    "load_session_learnings",
+    "save_session_learnings",
     # Path utilities
     "get_ledger_path",
     "get_search_db_path",

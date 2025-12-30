@@ -174,7 +174,7 @@ class Learning(BaseModel):
 class Block(BaseModel):
     """An immutable block in the ledger chain."""
 
-    id: str = Field(default_factory=lambda: str(uuid4())[:8])
+    id: str = Field(default_factory=lambda: str(uuid4()))
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     session_id: str = Field(description="ID of the Claude session that created this block")
     parent_block: Optional[str] = Field(
@@ -184,6 +184,14 @@ class Block(BaseModel):
     learnings: list[Learning] = Field(
         default_factory=list,
         description="Knowledge extracted in this session"
+    )
+    author_key_id: Optional[str] = Field(
+        default=None,
+        description="Key ID of block author for cryptographic signing"
+    )
+    signature: Optional[str] = Field(
+        default=None,
+        description="Base64-encoded Ed25519 signature of block hash"
     )
 
     @computed_field

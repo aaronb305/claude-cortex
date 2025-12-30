@@ -11,6 +11,7 @@ dependencies = [
     # Semantic search - FastEmbed uses ONNX (187MB) vs PyTorch (6.9GB)
     "fastembed>=0.4.0",
     "sqlite-vec>=0.1.0",
+    "cryptography>=46.0.3",
 ]
 
 [project.scripts]

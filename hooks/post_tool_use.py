@@ -12,9 +12,17 @@ Also tracks learning references for outcome suggestion at session end.
 import json
 import re
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# Ensure shared module is importable regardless of cwd
+sys.path.insert(0, str(Path(__file__).parent))
+
+from shared import (
+    get_session_learnings_path,
+    load_session_learnings,
+    save_session_learnings,
+)
 
 
 # Regex patterns for detecting learning references
@@ -29,35 +37,6 @@ LEARNING_REF_PATTERNS = [
     re.compile(r'applying learning[:\s]+([a-f0-9]{8,})', re.IGNORECASE),
     re.compile(r'\[([a-f0-9]{8,})\]', re.IGNORECASE),  # [abc12345] format
 ]
-
-
-def get_session_learnings_path(cwd: str) -> Path:
-    """Get the path to the session learnings tracking file."""
-    project_dir = Path(cwd) if cwd else Path.cwd()
-    claude_dir = project_dir / ".claude"
-    claude_dir.mkdir(parents=True, exist_ok=True)
-    return claude_dir / "session_learnings.json"
-
-
-def load_session_learnings(path: Path) -> dict:
-    """Load existing session learnings data."""
-    try:
-        if path.exists():
-            with open(path) as f:
-                return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        pass
-    return {"referenced_learnings": [], "last_updated": None}
-
-
-def save_session_learnings(path: Path, data: dict) -> None:
-    """Save session learnings data."""
-    data["last_updated"] = datetime.utcnow().isoformat()
-    try:
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
-    except IOError:
-        pass  # Silently fail if we can't write
 
 
 def extract_learning_ids_from_text(text: str) -> list[str]:

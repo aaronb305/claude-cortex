@@ -1,7 +1,7 @@
 ---
 name: bug-investigator
 description: Debugs and traces issues to find root causes. Deploy this agent when encountering errors, unexpected behavior, or failing tests. Systematically investigates to identify the source of problems. Triggers on "debug this", "why is this failing", "investigate this error", "find the bug".
-tools: Read, Bash, Grep, Glob, Edit
+tools: Read, Bash, Grep, Glob
 model: opus
 ---
 

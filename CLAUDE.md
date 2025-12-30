@@ -28,6 +28,9 @@ All core functionality works out of the box:
 |---------|-------------|--------------|
 | Ledger storage | Blockchain-style learning storage | pydantic, click (included) |
 | Full-text search | FTS5 keyword search | sqlite3 (Python stdlib) |
+| Cryptographic signing | Ed25519 block signatures | cryptography (included) |
+| Content-addressed storage | Deduplication via content hash | (included) |
+| Distributed sync | Merkle-based ledger sync | (included) |
 | Handoffs | Work-in-progress state capture | (included) |
 | Summaries | Transcript summary storage | (included) |
 | Confidence decay | Time-based confidence adjustment | (included) |
@@ -109,6 +112,7 @@ All agents use **opus** as the default model.
 | `handoff-management` | Save/load work-in-progress state |
 | `search-learnings` | Full-text search across learnings |
 | `continuous-execution` | Run autonomous iteration mode |
+| `outcome-prompt` | Suggest outcome recording for applied learnings |
 
 ### CLI Commands (Optional Power Tools)
 
@@ -139,6 +143,8 @@ uv run cclaude promote -p . --threshold 0.8
 
 # Verify chain integrity
 uv run cclaude verify
+uv run cclaude verify --merkle              # Also verify Merkle tree
+uv run cclaude verify --signatures          # Verify block signatures
 
 # Search learnings (full-text)
 uv run cclaude search "authentication"
@@ -146,6 +152,7 @@ uv run cclaude search "pattern" --category pattern
 
 # Rebuild search index
 uv run cclaude reindex
+uv run cclaude reindex --repair           # Retry only previously failed indexing
 
 # Handoff commands
 uv run cclaude handoff create --completed "Task 1" --pending "Task 2"
@@ -160,6 +167,28 @@ uv run cclaude summary list
 uv run cclaude suggest                    # Show relevant learnings from global ledger
 uv run cclaude suggest -n 5               # Limit to 5 suggestions
 uv run cclaude suggest --apply <id>       # Import a suggestion to project ledger
+
+# Content cache migration (performance optimization)
+uv run cclaude migrate                    # Populate content cache in reinforcements.json
+
+# Session analysis (Braintrust-like insights)
+uv run cclaude analyze session transcript.md --save-learnings
+uv run cclaude analyze metrics            # Aggregated metrics across sessions
+
+# Sync commands
+uv run cclaude sync status                # Show sync status and Merkle root
+uv run cclaude sync pull /path/to/remote  # Pull blocks from remote
+uv run cclaude sync push /path/to/remote  # Push blocks to remote
+uv run cclaude sync export backup.tar.gz  # Export to archive
+uv run cclaude sync import backup.tar.gz  # Import from archive
+
+# Key management
+uv run cclaude keys generate --name "You" # Generate signing keypair
+uv run cclaude keys show                  # Show your public key
+uv run cclaude keys export -o key.pem     # Export public key
+uv run cclaude keys trust key.pem --name "Bob"  # Add trusted key
+uv run cclaude keys list                  # List trusted keys
+uv run cclaude keys revoke <key_id>       # Remove trusted key
 ```
 
 ## Cross-Project Learning Transfer
@@ -276,8 +305,14 @@ Learnings are deduplicated using normalized content hashing:
 ~/.claude/
 ├── ledger/                    # Global ledger
 │   ├── blocks/*.json          # Immutable blocks
+│   ├── objects/               # Content-addressed storage (sharded by hash prefix)
+│   │   └── ab/ab12cd34.json   # Content files stored by hash
 │   ├── index.json             # Chain index
-│   └── reinforcements.json    # Confidence scores + outcomes
+│   ├── reinforcements.json    # Confidence scores + outcomes + content cache
+│   ├── merkle.json            # Merkle tree for efficient sync/verification
+│   ├── identity.json          # This ledger's public key + identity
+│   ├── .private_key           # Private signing key (mode 600)
+│   └── trusted_keys.json      # Trusted public keys from other users
 ├── cache/
 │   ├── search.db              # SQLite FTS5 search index
 │   └── semantic.db            # Semantic search vectors (optional)
@@ -290,16 +325,21 @@ Learnings are deduplicated using normalized content hashing:
 
 project/.claude/
 ├── ledger/                    # Project-specific ledger
+│   ├── merkle.json            # Merkle tree for this ledger
+│   ├── identity.json          # Project-specific identity (optional)
+│   └── trusted_keys.json      # Trusted keys for this project
 ├── handoffs/                  # Work-in-progress captures
 │   └── <session>/handoff-<timestamp>.md
 ├── summaries/                 # Conversation summaries
 │   └── <session>/summary-<timestamp>.json
+├── insights/                  # LLM-powered session analysis results
+│   └── <session>/insights-<timestamp>.json
 └── session_learnings.json     # Learnings referenced in current session
 
 ~/projects/continuous-claude-custom/
 ├── .claude-plugin/            # Plugin manifest
 ├── agents/                    # Custom agents (11 total)
-├── skills/                    # Skills (5)
+├── skills/                    # Skills (6)
 ├── hooks/                     # Hook scripts
 │   ├── shared.py              # Shared utilities (file locking, extraction)
 │   ├── session_start.py       # Inject ledger context + handoff
@@ -307,12 +347,19 @@ project/.claude/
 │   ├── pre_compact.py         # Pre-compaction handoff + summary + extraction
 │   └── post_tool_use.py       # Continuation nudges + learning tracking
 ├── src/continuous_claude/     # Python package
-│   ├── ledger/                # Blockchain implementation (chain.py, models.py)
+│   ├── ledger/                # Blockchain implementation
+│   │   ├── chain.py           # Ledger management + search integration
+│   │   ├── models.py          # Learning, Block, Outcome models
+│   │   ├── merkle.py          # Merkle tree for efficient sync
+│   │   ├── objects.py         # Content-addressed storage
+│   │   └── crypto.py          # Ed25519 signing and verification
 │   ├── runner/                # Continuous execution
 │   ├── handoff/               # WIP state capture
 │   ├── summaries/             # Transcript summary storage
 │   ├── search/                # SQLite FTS5 + semantic search
 │   ├── suggestions/           # Cross-project recommendation engine
+│   ├── analysis/              # LLM-powered session analysis
+│   ├── sync.py                # Ledger sync protocol (export/import)
 │   └── cli.py                 # CLI interface
 ├── tests/                     # Test suite
 └── install.sh                 # Installation script
@@ -399,6 +446,210 @@ Blocks are write-once. Outcomes and confidence updates are stored in `reinforcem
 ```bash
 uv run cclaude verify              # Verify chain integrity
 ```
+
+### Merkle Tree Verification
+
+The ledger maintains a Merkle tree (`merkle.json`) for efficient integrity verification and sync:
+
+- **Automatic updates**: Tree is rebuilt after each block is appended
+- **O(log n) diff**: Efficiently find which blocks differ between ledgers
+- **Tamper detection**: Root hash changes if any block is modified
+
+The Merkle tree is built from sorted block IDs for deterministic trees across machines.
+
+## Distributed Sync
+
+The sync module enables synchronization between ledgers on different machines.
+
+### Sync Commands
+
+```bash
+# Check sync status (also updates merkle.json)
+uv run cclaude sync status
+uv run cclaude sync status -p .          # Project ledger
+
+# Pull blocks from a remote ledger
+uv run cclaude sync pull /path/to/remote/ledger
+uv run cclaude sync pull ~/backup/ledger --dry-run
+
+# Push blocks to a remote ledger
+uv run cclaude sync push /path/to/remote/ledger
+uv run cclaude sync push /mnt/backup/ledger -p .
+
+# Export to archive (for transfer between machines)
+uv run cclaude sync export ~/ledger-backup.tar.gz
+uv run cclaude sync export ./project-ledger.tar.gz -p .
+
+# Import from archive (merges with existing)
+uv run cclaude sync import ~/ledger-backup.tar.gz
+uv run cclaude sync import ./project-ledger.tar.gz -p .
+```
+
+### How Sync Works
+
+1. **Merkle Tree Comparison**: Compares Merkle roots to detect differences in O(1)
+2. **Block Set Diff**: Identifies missing blocks in each direction
+3. **Hash Verification**: Each imported block's hash is verified before acceptance
+4. **Index Update**: Chain index is updated to include new blocks in correct order
+
+Sync status values:
+- `IN_SYNC` - Ledgers are identical (same Merkle root)
+- `LOCAL_AHEAD` - Local has blocks remote doesn't have
+- `REMOTE_AHEAD` - Remote has blocks local doesn't have
+- `DIVERGED` - Both have unique blocks (bidirectional sync needed)
+
+### Archive Contents
+
+Export archives (`*.tar.gz`) include:
+- `blocks/*.json` - Immutable block files
+- `index.json` - Chain index with head pointer
+- `reinforcements.json` - Mutable confidence/outcome data
+
+## Content-Addressed Storage
+
+Learnings are stored in a content-addressed object store for deduplication.
+
+### How It Works
+
+Objects are stored by their content hash in a sharded directory structure:
+```
+objects/
+  ab/
+    ab12cd34ef56.json  # 16-char hash as filename
+  cd/
+    cd78ef90ab12.json
+```
+
+### Benefits
+
+- **Automatic deduplication**: Same content = same hash = stored once
+- **Efficient lookup**: O(1) content retrieval by hash
+- **Cross-ledger sharing**: Global and project ledgers can share content
+- **Integrity verification**: Hash serves as checksum
+
+### reinforcements.json Integration
+
+The `object_store_hash` field in `reinforcements.json` links learnings to their content:
+```json
+{
+  "learnings": {
+    "abc123...": {
+      "confidence": 0.8,
+      "object_store_hash": "ab12cd34ef567890",
+      "content": "cached content for fast access"
+    }
+  }
+}
+```
+
+## Cryptographic Signatures
+
+Blocks can be signed with Ed25519 keys for authenticity verification.
+
+### Key Generation
+
+```bash
+# Generate a signing keypair
+uv run cclaude keys generate --name "Your Name"
+uv run cclaude keys generate -p . --name "Project Key"
+
+# View your public key
+uv run cclaude keys show
+uv run cclaude keys export -o my_key.pem
+```
+
+### Trust Management
+
+```bash
+# Add a trusted public key
+uv run cclaude keys trust colleague_key.pem --name "Colleague" --level full
+uv run cclaude keys trust team_key.pem --name "Team Member" --level marginal
+
+# List trusted keys
+uv run cclaude keys list
+
+# Revoke a trusted key
+uv run cclaude keys revoke <key_id>
+```
+
+Trust levels:
+- `full` - Fully trusted, signatures from this key are accepted
+- `marginal` - Partially trusted, may require additional verification
+- `none` - Not trusted, signatures are rejected
+
+### Signature Verification
+
+```bash
+# Verify all block signatures
+uv run cclaude verify --signatures
+
+# Combined verification (chain + merkle + signatures)
+uv run cclaude verify --merkle --signatures
+```
+
+### How Signing Works
+
+1. **Block Creation**: When a block is appended, it's signed with the ledger's private key
+2. **Signature Storage**: Signatures are stored in `blocks/<id>.sig` files
+3. **Verification**: Signatures are verified against trusted keys during sync and verify
+
+Signature file format:
+```json
+{
+  "key_id": "ABC123",
+  "signature": "base64-encoded-signature"
+}
+```
+
+## Content Caching
+
+The `migrate` command populates a content cache in `reinforcements.json`:
+
+```bash
+uv run cclaude migrate             # Migrate global ledger
+uv run cclaude migrate -p .        # Migrate project ledger
+```
+
+**Why this matters**: SessionStart hook performance improves from O(n*m) to O(1) for content lookups. Without the cache, the hook must scan all blocks to find learning content. With the cache, content is available directly in `reinforcements.json`.
+
+## Search Index Recovery
+
+If the search index becomes corrupted or out of sync:
+
+```bash
+# Full reindex - rebuilds entire index from blocks
+uv run cclaude reindex
+
+# Repair mode - retry only previously failed indexing operations
+uv run cclaude reindex --repair
+```
+
+The `--repair` flag is faster when only a few learnings failed to index. It reads `failed_indexing.json` and retries those specific learnings.
+
+## Session Analysis
+
+LLM-powered analysis provides Braintrust-like insights from session transcripts:
+
+```bash
+# Analyze a session transcript
+uv run cclaude analyze session transcript.md
+
+# Save insights to project directory
+uv run cclaude analyze session transcript.md -p . --save-learnings
+
+# Use regex-only extraction (faster, no LLM cost)
+uv run cclaude analyze session transcript.md --no-llm
+
+# View aggregated metrics across sessions
+uv run cclaude analyze metrics -p .
+```
+
+Analysis extracts:
+- **What Worked**: Successful approaches and decisions
+- **What Failed**: Errors, dead ends, incorrect assumptions
+- **Patterns**: Reusable solutions and workflows
+- **Key Decisions**: Important choices made during the session
+- **Metrics**: Duration, turns, tool usage, success rates
 
 ## Commands
 
