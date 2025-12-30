@@ -17,13 +17,15 @@ from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
+# Ensure shared module is importable regardless of cwd
+sys.path.insert(0, str(Path(__file__).parent))
+
 from shared import (
-    append_block,
+    extract_and_store_learnings,
     extract_assistant_messages,
     extract_blockers_from_text,
     extract_learnings,
     extract_tasks_from_text,
-    get_ledger_path,
     get_modified_files,
     read_transcript,
     save_handoff,
@@ -218,26 +220,18 @@ def main():
         print(json.dumps({}))
         sys.exit(0)
 
-    # Extract learnings
+    # Extract learnings (needed for summary)
     learnings = extract_learnings(assistant_text)
 
     output = {}
     messages = []
 
     if learnings:
-        # Check if we're in a project with a .claude directory
-        if (project_dir / ".claude").exists() or (project_dir / "pyproject.toml").exists() or (project_dir / "package.json").exists():
-            ledger_path = get_ledger_path(str(project_dir), is_global=False)
-        else:
-            # Use global ledger
-            ledger_path = get_ledger_path(None, is_global=True)
-
-        # Append block
-        block = append_block(ledger_path, session_id + "-precompact", learnings)
-
+        # Use unified function to store learnings
+        block = extract_and_store_learnings(
+            assistant_text, str(project_dir), session_id, session_suffix="-precompact"
+        )
         if block:
-            # Log to stderr (won't affect hook output)
-            print(f"[continuous-claude] PreCompact: Extracted {len(learnings)} learnings -> block {block['id']}", file=sys.stderr)
             messages.append(f"Captured {len(learnings)} learnings to ledger.")
 
     # Save handoff before compaction

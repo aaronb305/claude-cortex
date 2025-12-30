@@ -130,7 +130,9 @@ class Ledger:
                 pass  # Continue to create block with empty learnings for session tracking
 
         # Lock index file for the entire operation to ensure atomicity
+        # Use a single lock context - no nested locking needed
         with file_lock(self.index_file, exclusive=True):
+            # Read index within lock context
             with open(self.index_file) as f:
                 index = json.load(f)
             head = index.get("head")
@@ -141,13 +143,13 @@ class Ledger:
                 learnings=learnings,
             )
 
-            # Write block to file (with its own lock)
+            # Write block to file directly - new block files are unique,
+            # no contention risk since block ID is a UUID
             block_file = self.blocks_dir / f"{block.id}.json"
-            with file_lock(block_file, exclusive=True):
-                with open(block_file, "w") as f:
-                    json.dump(block.model_dump(mode="json"), f, indent=2, default=str)
+            with open(block_file, "w") as f:
+                json.dump(block.model_dump(mode="json"), f, indent=2, default=str)
 
-            # Update index
+            # Update index atomically within the same lock context
             index["head"] = block.id
             index["blocks"].append({
                 "id": block.id,
@@ -454,6 +456,9 @@ class Ledger:
         already exists in the ledger. If so, either skips it or merges by
         boosting the existing learning's confidence.
 
+        This method is optimized to read reinforcements.json once at the start
+        and write once at the end, avoiding O(n*m) file operations.
+
         Args:
             learnings: List of learnings to deduplicate
             merge_duplicates: If True, boost confidence of existing duplicate.
@@ -467,32 +472,48 @@ class Ledger:
         unique = []
         skipped = []
 
+        # Read reinforcements once at the start
+        reinforcements = self._read_json(self.reinforcements_file)
+        learnings_data = reinforcements.get("learnings", {})
+
+        # Build content_hash -> learning_id lookup for O(1) duplicate detection
+        hash_to_id: dict[str, str] = {}
+        for learning_id, data in learnings_data.items():
+            content_hash = data.get("content_hash")
+            if content_hash:
+                hash_to_id[content_hash] = learning_id
+
+        # Track whether we need to write back reinforcements
+        reinforcements_modified = False
+
         for learning in learnings:
             # Ensure content_hash is computed
             if learning.content_hash is None:
                 learning.content_hash = compute_content_hash(learning.content)
 
-            # Check for existing duplicate
-            existing, existing_id = self.find_by_content_hash(learning.content_hash)
+            # Check for existing duplicate using the lookup table
+            existing_id = hash_to_id.get(learning.content_hash)
 
-            if existing:
+            if existing_id:
                 skipped.append(existing_id)
 
-                if merge_duplicates:
+                if merge_duplicates and existing_id in learnings_data:
                     # Boost confidence of existing learning (discovery reinforcement)
-                    reinforcements = self._read_json(self.reinforcements_file)
-                    if existing_id in reinforcements.get("learnings", {}):
-                        current_conf = reinforcements["learnings"][existing_id]["confidence"]
-                        # Apply a small boost (0.05) capped at 1.0
-                        new_conf = min(1.0, current_conf + 0.05)
-                        reinforcements["learnings"][existing_id]["confidence"] = new_conf
-                        reinforcements["learnings"][existing_id]["last_updated"] = datetime.now(timezone.utc).isoformat()
-                        reinforcements["learnings"][existing_id]["rediscovery_count"] = (
-                            reinforcements["learnings"][existing_id].get("rediscovery_count", 0) + 1
-                        )
-                        self._write_json(self.reinforcements_file, reinforcements)
+                    current_conf = learnings_data[existing_id]["confidence"]
+                    # Apply a small boost (0.05) capped at 1.0
+                    new_conf = min(1.0, current_conf + 0.05)
+                    learnings_data[existing_id]["confidence"] = new_conf
+                    learnings_data[existing_id]["last_updated"] = datetime.now(timezone.utc).isoformat()
+                    learnings_data[existing_id]["rediscovery_count"] = (
+                        learnings_data[existing_id].get("rediscovery_count", 0) + 1
+                    )
+                    reinforcements_modified = True
             else:
                 unique.append(learning)
+
+        # Write back reinforcements once if any duplicates were merged
+        if reinforcements_modified:
+            self._write_json(self.reinforcements_file, reinforcements)
 
         return unique, skipped
 

@@ -10,11 +10,12 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
+# Ensure shared module is importable regardless of cwd
+sys.path.insert(0, str(Path(__file__).parent))
+
 from shared import (
-    append_block,
+    extract_and_store_learnings,
     extract_assistant_messages,
-    extract_learnings,
-    get_ledger_path,
     get_learning_content,
     read_json,
     read_transcript,
@@ -173,26 +174,8 @@ def main():
     if not assistant_text:
         sys.exit(0)
 
-    # Extract learnings
-    learnings = extract_learnings(assistant_text)
-
-    if learnings:
-        # Determine ledger path (project or global)
-        project_dir = Path(cwd) if cwd else Path.cwd()
-
-        # Check if we're in a project with a .claude directory
-        if (project_dir / ".claude").exists() or (project_dir / "pyproject.toml").exists() or (project_dir / "package.json").exists():
-            ledger_path = get_ledger_path(str(project_dir), is_global=False)
-        else:
-            # Use global ledger
-            ledger_path = get_ledger_path(None, is_global=True)
-
-        # Append block
-        block = append_block(ledger_path, session_id, learnings)
-
-        if block:
-            # Log to stderr (won't affect hook output)
-            print(f"[continuous-claude] Extracted {len(learnings)} learnings -> block {block['id']}", file=sys.stderr)
+    # Extract and store learnings using unified function
+    extract_and_store_learnings(assistant_text, cwd, session_id)
 
     # Check for referenced learnings that need outcome feedback
     session_learnings_path = get_session_learnings_path(cwd)

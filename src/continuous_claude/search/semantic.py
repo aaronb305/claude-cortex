@@ -15,6 +15,7 @@ Dependencies:
 import hashlib
 import sqlite3
 import struct
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
@@ -131,7 +132,7 @@ class SemanticIndex:
     def connection(self) -> sqlite3.Connection:
         """Get or create the database connection with sqlite-vec loaded."""
         if self._connection is None:
-            self._connection = sqlite3.connect(str(self.db_path))
+            self._connection = sqlite3.connect(str(self.db_path), timeout=30.0)
             self._connection.row_factory = sqlite3.Row
             # Load the sqlite-vec extension
             self._connection.enable_load_extension(True)
@@ -201,7 +202,7 @@ class SemanticIndex:
         embeddings = list(self.model.embed(texts))
         return [emb.tolist() for emb in embeddings]
 
-    def index_learning(self, learning_id: str, content: str) -> None:
+    def index_learning(self, learning_id: str, content: str) -> bool:
         """Add or update a learning in the semantic index.
 
         Generates an embedding for the content and stores it for
@@ -210,56 +211,75 @@ class SemanticIndex:
         Args:
             learning_id: Unique identifier for the learning
             content: The text content to embed and index
+
+        Returns:
+            True if indexing succeeded, False on error
         """
-        cursor = self.connection.cursor()
-        content_hash = self._hash_content(content)
+        try:
+            cursor = self.connection.cursor()
+            content_hash = self._hash_content(content)
 
-        # Check if learning already exists and if content changed
-        cursor.execute(
-            "SELECT id, content_hash FROM learning_embeddings WHERE learning_id = ?",
-            (learning_id,)
-        )
-        existing = cursor.fetchone()
-
-        if existing:
-            if existing["content_hash"] == content_hash:
-                # Content unchanged, skip re-indexing
-                return
-
-            # Content changed, remove old embedding
+            # Check if learning already exists and if content changed
             cursor.execute(
-                "DELETE FROM vec_embeddings WHERE id = ?",
-                (existing["id"],)
+                "SELECT id, content_hash FROM learning_embeddings WHERE learning_id = ?",
+                (learning_id,)
             )
+            existing = cursor.fetchone()
+
+            if existing:
+                if existing["content_hash"] == content_hash:
+                    # Content unchanged, skip re-indexing
+                    return True
+
+                # Content changed, remove old embedding
+                cursor.execute(
+                    "DELETE FROM vec_embeddings WHERE id = ?",
+                    (existing["id"],)
+                )
+                cursor.execute(
+                    "DELETE FROM learning_embeddings WHERE id = ?",
+                    (existing["id"],)
+                )
+
+            # Generate embedding
+            embedding = self._embed_single(content)
+
+            # Insert into mapping table
             cursor.execute(
-                "DELETE FROM learning_embeddings WHERE id = ?",
-                (existing["id"],)
+                "INSERT INTO learning_embeddings (learning_id, content_hash) VALUES (?, ?)",
+                (learning_id, content_hash)
+            )
+            row_id = cursor.lastrowid
+
+            # Insert embedding into vector table
+            embedding_bytes = self._serialize_embedding(embedding)
+            cursor.execute(
+                "INSERT INTO vec_embeddings (id, embedding) VALUES (?, ?)",
+                (row_id, embedding_bytes)
             )
 
-        # Generate embedding
-        embedding = self._embed_single(content)
-
-        # Insert into mapping table
-        cursor.execute(
-            "INSERT INTO learning_embeddings (learning_id, content_hash) VALUES (?, ?)",
-            (learning_id, content_hash)
-        )
-        row_id = cursor.lastrowid
-
-        # Insert embedding into vector table
-        embedding_bytes = self._serialize_embedding(embedding)
-        cursor.execute(
-            "INSERT INTO vec_embeddings (id, embedding) VALUES (?, ?)",
-            (row_id, embedding_bytes)
-        )
-
-        self.connection.commit()
+            self.connection.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"[SemanticIndex] Error indexing learning {learning_id}: {e}", file=sys.stderr)
+            try:
+                self.connection.rollback()
+            except sqlite3.Error:
+                pass
+            return False
+        except Exception as e:
+            print(f"[SemanticIndex] Embedding error for {learning_id}: {e}", file=sys.stderr)
+            try:
+                self.connection.rollback()
+            except sqlite3.Error:
+                pass
+            return False
 
     def index_learnings_batch(
         self,
         learnings: list[tuple[str, str]],
         batch_size: int = 32,
-    ) -> int:
+    ) -> tuple[int, int]:
         """Index multiple learnings efficiently with batch embedding.
 
         Args:
@@ -267,63 +287,86 @@ class SemanticIndex:
             batch_size: Number of embeddings to generate at once
 
         Returns:
-            Number of learnings indexed
+            Tuple of (successfully_indexed, failed_count)
         """
         if not learnings:
-            return 0
+            return (0, 0)
 
-        cursor = self.connection.cursor()
         indexed = 0
+        failed = 0
 
         # Process in batches
         for i in range(0, len(learnings), batch_size):
             batch = learnings[i:i + batch_size]
 
-            # Check which need indexing (content changed)
-            to_index = []
-            for learning_id, content in batch:
-                content_hash = self._hash_content(content)
-                cursor.execute(
-                    "SELECT id, content_hash FROM learning_embeddings WHERE learning_id = ?",
-                    (learning_id,)
-                )
-                existing = cursor.fetchone()
+            try:
+                cursor = self.connection.cursor()
 
-                if existing:
-                    if existing["content_hash"] == content_hash:
-                        continue  # Skip unchanged
-                    # Remove old entry
-                    cursor.execute("DELETE FROM vec_embeddings WHERE id = ?", (existing["id"],))
-                    cursor.execute("DELETE FROM learning_embeddings WHERE id = ?", (existing["id"],))
+                # Check which need indexing (content changed)
+                to_index = []
+                for learning_id, content in batch:
+                    content_hash = self._hash_content(content)
+                    cursor.execute(
+                        "SELECT id, content_hash FROM learning_embeddings WHERE learning_id = ?",
+                        (learning_id,)
+                    )
+                    existing = cursor.fetchone()
 
-                to_index.append((learning_id, content, content_hash))
+                    if existing:
+                        if existing["content_hash"] == content_hash:
+                            continue  # Skip unchanged
+                        # Remove old entry
+                        cursor.execute("DELETE FROM vec_embeddings WHERE id = ?", (existing["id"],))
+                        cursor.execute("DELETE FROM learning_embeddings WHERE id = ?", (existing["id"],))
 
-            if not to_index:
-                continue
+                    to_index.append((learning_id, content, content_hash))
 
-            # Batch embed
-            contents = [content for _, content, _ in to_index]
-            embeddings = self._embed_batch(contents)
+                if not to_index:
+                    continue
 
-            # Insert all
-            for (learning_id, _, content_hash), embedding in zip(to_index, embeddings):
-                cursor.execute(
-                    "INSERT INTO learning_embeddings (learning_id, content_hash) VALUES (?, ?)",
-                    (learning_id, content_hash)
-                )
-                row_id = cursor.lastrowid
+                # Batch embed
+                contents = [content for _, content, _ in to_index]
+                try:
+                    embeddings = self._embed_batch(contents)
+                except Exception as e:
+                    print(f"[SemanticIndex] Batch embedding error: {e}", file=sys.stderr)
+                    failed += len(to_index)
+                    try:
+                        self.connection.rollback()
+                    except sqlite3.Error:
+                        pass
+                    continue
 
-                embedding_bytes = self._serialize_embedding(embedding)
-                cursor.execute(
-                    "INSERT INTO vec_embeddings (id, embedding) VALUES (?, ?)",
-                    (row_id, embedding_bytes)
-                )
-                indexed += 1
+                # Insert all
+                for (learning_id, _, content_hash), embedding in zip(to_index, embeddings):
+                    try:
+                        cursor.execute(
+                            "INSERT INTO learning_embeddings (learning_id, content_hash) VALUES (?, ?)",
+                            (learning_id, content_hash)
+                        )
+                        row_id = cursor.lastrowid
 
-            # Commit each batch
-            self.connection.commit()
+                        embedding_bytes = self._serialize_embedding(embedding)
+                        cursor.execute(
+                            "INSERT INTO vec_embeddings (id, embedding) VALUES (?, ?)",
+                            (row_id, embedding_bytes)
+                        )
+                        indexed += 1
+                    except sqlite3.Error as e:
+                        print(f"[SemanticIndex] Error inserting {learning_id}: {e}", file=sys.stderr)
+                        failed += 1
 
-        return indexed
+                # Commit each batch
+                self.connection.commit()
+            except sqlite3.Error as e:
+                print(f"[SemanticIndex] Batch error: {e}", file=sys.stderr)
+                failed += len(batch)
+                try:
+                    self.connection.rollback()
+                except sqlite3.Error:
+                    pass
+
+        return (indexed, failed)
 
     def search(self, query: str, limit: int = 10) -> list[tuple[str, float]]:
         """Search for semantically similar learnings.
@@ -397,7 +440,7 @@ class SemanticIndex:
 
         return False
 
-    def reindex_ledger(self, ledger: "Ledger") -> int:
+    def reindex_ledger(self, ledger: "Ledger") -> tuple[int, int]:
         """Rebuild the entire semantic index from a ledger.
 
         Uses batch embedding for efficiency.
@@ -406,14 +449,22 @@ class SemanticIndex:
             ledger: The Ledger instance to index from
 
         Returns:
-            Number of learnings indexed
+            Tuple of (successfully_indexed, failed_count)
         """
-        cursor = self.connection.cursor()
+        try:
+            cursor = self.connection.cursor()
 
-        # Clear existing index
-        cursor.execute("DELETE FROM vec_embeddings")
-        cursor.execute("DELETE FROM learning_embeddings")
-        self.connection.commit()
+            # Clear existing index
+            cursor.execute("DELETE FROM vec_embeddings")
+            cursor.execute("DELETE FROM learning_embeddings")
+            self.connection.commit()
+        except sqlite3.Error as e:
+            print(f"[SemanticIndex] Error clearing index: {e}", file=sys.stderr)
+            try:
+                self.connection.rollback()
+            except sqlite3.Error:
+                pass
+            return (0, 0)
 
         # Collect all learnings
         learnings = []

@@ -102,7 +102,12 @@ class Learning(BaseModel):
     )
     outcomes: list[Outcome] = Field(
         default_factory=list,
-        description="History of applications and their results"
+        description=(
+            "DEPRECATED: This field exists only for backwards compatibility with "
+            "existing block hashes. Actual outcomes are stored in reinforcements.json "
+            "to preserve block immutability. This field is always empty after creation; "
+            "use Ledger.get_learning_outcomes() to retrieve outcome history."
+        )
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -142,7 +147,13 @@ class Learning(BaseModel):
         }
 
     def apply_outcome(self, result: OutcomeResult, context: str) -> None:
-        """Record an outcome and adjust confidence based on result."""
+        """Record an outcome and adjust confidence based on result.
+
+        DEPRECATED: This method modifies in-memory state only. Changes to
+        outcomes and confidence are NOT persisted when the Learning is stored
+        in a block (blocks are immutable). Use Ledger.record_outcome() instead,
+        which stores outcomes in reinforcements.json.
+        """
         delta_map = {
             OutcomeResult.SUCCESS: 0.1,
             OutcomeResult.PARTIAL: 0.02,

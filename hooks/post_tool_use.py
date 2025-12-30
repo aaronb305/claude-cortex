@@ -264,8 +264,9 @@ def main():
         # Also check tool_input for learning references (e.g., in file content being read)
         if tool_input:
             track_learning_references(tool_input, cwd, session_id)
-    except Exception:
-        pass  # Don't fail the hook if tracking fails
+    except Exception as e:
+        # Log error but don't fail the hook
+        print(f"[continuous-claude] PostToolUse: Learning tracking error: {e}", file=sys.stderr)
 
     # Only process nudge messages for relevant tools
     relevant_tools = {"TodoWrite", "Edit", "Write"}

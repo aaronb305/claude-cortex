@@ -13,6 +13,9 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+# Ensure shared module is importable regardless of cwd
+sys.path.insert(0, str(Path(__file__).parent))
+
 # Import shared utilities
 from shared import (
     get_ledger_path,
@@ -220,8 +223,9 @@ def get_cross_project_suggestions(project_dir: Path, limit: int = 3) -> str:
 
         return "\n".join(lines)
 
-    except Exception:
-        # Don't fail hook if suggestion system has issues
+    except Exception as e:
+        # Don't fail hook if suggestion system has issues, but log the error
+        print(f"[continuous-claude] SessionStart: Suggestion system error: {e}", file=sys.stderr)
         return ""
 
 

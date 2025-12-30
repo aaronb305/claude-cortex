@@ -1,6 +1,7 @@
 """SQLite FTS5 search index for learnings."""
 
 import sqlite3
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -66,7 +67,7 @@ class SearchIndex:
     def connection(self) -> sqlite3.Connection:
         """Get or create the database connection."""
         if self._connection is None:
-            self._connection = sqlite3.connect(str(self.db_path))
+            self._connection = sqlite3.connect(str(self.db_path), timeout=30.0)
             self._connection.row_factory = sqlite3.Row
         return self._connection
 
@@ -102,7 +103,7 @@ class SearchIndex:
         confidence: float,
         source: Optional[str] = None,
         commit: bool = True,
-    ) -> None:
+    ) -> bool:
         """Add a learning to the search index.
 
         If the learning already exists, it will be updated.
@@ -114,34 +115,46 @@ class SearchIndex:
             confidence: Confidence score (0.0 to 1.0)
             source: Optional source file or context
             commit: Whether to commit after this insert (False for batch operations)
+
+        Returns:
+            True if indexing succeeded, False on error
         """
-        cursor = self.connection.cursor()
+        try:
+            cursor = self.connection.cursor()
 
-        # Check if learning already exists
-        cursor.execute(
-            "SELECT rowid FROM learnings_fts WHERE learning_id = ?",
-            (learning_id,)
-        )
-        existing = cursor.fetchone()
-
-        if existing:
-            # Delete existing entry before inserting updated one
+            # Check if learning already exists
             cursor.execute(
-                "DELETE FROM learnings_fts WHERE learning_id = ?",
+                "SELECT rowid FROM learnings_fts WHERE learning_id = ?",
                 (learning_id,)
             )
+            existing = cursor.fetchone()
 
-        # Insert the learning
-        cursor.execute(
-            """
-            INSERT INTO learnings_fts (learning_id, category, content, confidence, source)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (learning_id, category, content, confidence, source or ""),
-        )
+            if existing:
+                # Delete existing entry before inserting updated one
+                cursor.execute(
+                    "DELETE FROM learnings_fts WHERE learning_id = ?",
+                    (learning_id,)
+                )
 
-        if commit:
-            self.connection.commit()
+            # Insert the learning
+            cursor.execute(
+                """
+                INSERT INTO learnings_fts (learning_id, category, content, confidence, source)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (learning_id, category, content, confidence, source or ""),
+            )
+
+            if commit:
+                self.connection.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"[SearchIndex] Error indexing learning {learning_id}: {e}", file=sys.stderr)
+            try:
+                self.connection.rollback()
+            except sqlite3.Error:
+                pass
+            return False
 
     def reindex_ledger(self, ledger: "Ledger") -> int:
         """Rebuild the entire search index from a ledger.
@@ -197,42 +210,50 @@ class SearchIndex:
         if not query.strip():
             return []
 
-        cursor = self.connection.cursor()
+        try:
+            cursor = self.connection.cursor()
 
-        # Use FTS5 match query with BM25 ranking and snippet generation
-        cursor.execute(
-            """
-            SELECT
-                learning_id,
-                category,
-                content,
-                confidence,
-                source,
-                snippet(learnings_fts, 2, '<mark>', '</mark>', '...', 64) as snippet,
-                rank
-            FROM learnings_fts
-            WHERE learnings_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (query, limit),
-        )
-
-        results = []
-        for row in cursor.fetchall():
-            results.append(
-                SearchResult(
-                    learning_id=row["learning_id"],
-                    category=row["category"],
-                    content=row["content"],
-                    confidence=float(row["confidence"]),
-                    source=row["source"] if row["source"] else None,
-                    snippet=row["snippet"],
-                    rank=float(row["rank"]),
-                )
+            # Use FTS5 match query with BM25 ranking and snippet generation
+            cursor.execute(
+                """
+                SELECT
+                    learning_id,
+                    category,
+                    content,
+                    confidence,
+                    source,
+                    snippet(learnings_fts, 2, '<mark>', '</mark>', '...', 64) as snippet,
+                    rank
+                FROM learnings_fts
+                WHERE learnings_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (query, limit),
             )
 
-        return results
+            results = []
+            for row in cursor.fetchall():
+                results.append(
+                    SearchResult(
+                        learning_id=row["learning_id"],
+                        category=row["category"],
+                        content=row["content"],
+                        confidence=float(row["confidence"]),
+                        source=row["source"] if row["source"] else None,
+                        snippet=row["snippet"],
+                        rank=float(row["rank"]),
+                    )
+                )
+
+            return results
+        except sqlite3.OperationalError as e:
+            # Handle malformed FTS5 queries (e.g., unbalanced quotes, invalid syntax)
+            print(f"[SearchIndex] FTS5 query error for '{query}': {e}", file=sys.stderr)
+            return []
+        except sqlite3.Error as e:
+            print(f"[SearchIndex] Search error: {e}", file=sys.stderr)
+            return []
 
     def search_by_category(
         self,
@@ -262,44 +283,52 @@ class SearchIndex:
                 f"Invalid category '{category}'. Must be one of: {valid_categories}"
             )
 
-        cursor = self.connection.cursor()
+        try:
+            cursor = self.connection.cursor()
 
-        # Use separate WHERE clause for category filter since FTS5 column filter
-        # syntax requires exact match on the column value
-        cursor.execute(
-            """
-            SELECT
-                learning_id,
-                category,
-                content,
-                confidence,
-                source,
-                snippet(learnings_fts, 2, '<mark>', '</mark>', '...', 64) as snippet,
-                rank
-            FROM learnings_fts
-            WHERE learnings_fts MATCH ?
-              AND category = ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (query, category, limit),
-        )
-
-        results = []
-        for row in cursor.fetchall():
-            results.append(
-                SearchResult(
-                    learning_id=row["learning_id"],
-                    category=row["category"],
-                    content=row["content"],
-                    confidence=float(row["confidence"]),
-                    source=row["source"] if row["source"] else None,
-                    snippet=row["snippet"],
-                    rank=float(row["rank"]),
-                )
+            # Use separate WHERE clause for category filter since FTS5 column filter
+            # syntax requires exact match on the column value
+            cursor.execute(
+                """
+                SELECT
+                    learning_id,
+                    category,
+                    content,
+                    confidence,
+                    source,
+                    snippet(learnings_fts, 2, '<mark>', '</mark>', '...', 64) as snippet,
+                    rank
+                FROM learnings_fts
+                WHERE learnings_fts MATCH ?
+                  AND category = ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (query, category, limit),
             )
 
-        return results
+            results = []
+            for row in cursor.fetchall():
+                results.append(
+                    SearchResult(
+                        learning_id=row["learning_id"],
+                        category=row["category"],
+                        content=row["content"],
+                        confidence=float(row["confidence"]),
+                        source=row["source"] if row["source"] else None,
+                        snippet=row["snippet"],
+                        rank=float(row["rank"]),
+                    )
+                )
+
+            return results
+        except sqlite3.OperationalError as e:
+            # Handle malformed FTS5 queries (e.g., unbalanced quotes, invalid syntax)
+            print(f"[SearchIndex] FTS5 query error for '{query}': {e}", file=sys.stderr)
+            return []
+        except sqlite3.Error as e:
+            print(f"[SearchIndex] Search error: {e}", file=sys.stderr)
+            return []
 
     def delete_learning(self, learning_id: str) -> bool:
         """Remove a learning from the search index.

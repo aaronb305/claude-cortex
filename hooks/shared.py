@@ -213,7 +213,8 @@ def read_json_locked(path: Path) -> dict:
     try:
         with file_lock(path, exclusive=False):
             return read_json(path)
-    except Exception:
+    except Exception as e:
+        print(f"[continuous-claude] Warning: Failed to read {path}: {e}", file=sys.stderr)
         return {}
 
 
@@ -463,9 +464,10 @@ def compute_block_hash(block: dict) -> str:
 def index_learnings_to_search(ledger_path: Path, learnings: list[dict]) -> None:
     """Add learnings to the search index.
 
-    Silently fails if the search module is not available or indexing fails,
+    Logs warnings if the search module is not available or indexing fails,
     as search indexing should not block ledger operations.
     Uses batch commits for better performance.
+    Uses file locking to prevent race conditions with concurrent indexing.
 
     Args:
         ledger_path: Path to the ledger directory.
@@ -476,23 +478,25 @@ def index_learnings_to_search(ledger_path: Path, learnings: list[dict]) -> None:
 
     try:
         db_path = get_search_db_path(ledger_path)
-        index = _SearchIndex(db_path)
+        # Use file lock to prevent concurrent search index modifications
+        with file_lock(db_path, exclusive=True):
+            index = _SearchIndex(db_path)
 
-        for learning in learnings:
-            index.index_learning(
-                learning_id=learning["id"],
-                category=learning["category"],
-                content=learning["content"],
-                confidence=learning["confidence"],
-                source=learning.get("source"),
-                commit=False,  # Batch operation
-            )
-        # Single commit at the end
-        index.connection.commit()
-        index.close()
-    except Exception:
-        # Don't fail block creation if indexing fails
-        pass
+            for learning in learnings:
+                index.index_learning(
+                    learning_id=learning["id"],
+                    category=learning["category"],
+                    content=learning["content"],
+                    confidence=learning["confidence"],
+                    source=learning.get("source"),
+                    commit=False,  # Batch operation
+                )
+            # Single commit at the end
+            index.connection.commit()
+            index.close()
+    except Exception as e:
+        # Don't fail block creation if indexing fails, but log warning
+        print(f"[continuous-claude] Warning: Search indexing failed: {e}", file=sys.stderr)
 
 
 # -----------------------------------------------------------------------------
@@ -800,7 +804,8 @@ def save_handoff(
         file_path.write_text(content, encoding="utf-8")
 
         return file_path
-    except Exception:
+    except Exception as e:
+        print(f"[continuous-claude] Warning: Failed to save handoff: {e}", file=sys.stderr)
         return None
 
 
@@ -836,7 +841,8 @@ def load_latest_handoff(project_dir: Path) -> Optional[dict]:
             handoff = parse_handoff_markdown(content)
             if handoff:
                 return handoff
-        except Exception:
+        except Exception as e:
+            print(f"[continuous-claude] Warning: Failed to parse handoff {handoff_file}: {e}", file=sys.stderr)
             continue
 
     return None
@@ -913,7 +919,8 @@ def parse_handoff_markdown(content: str) -> Optional[dict]:
             "context_notes": parse_context_section(),
         }
 
-    except Exception:
+    except Exception as e:
+        print(f"[continuous-claude] Warning: Failed to parse handoff markdown: {e}", file=sys.stderr)
         return None
 
 
@@ -1024,7 +1031,8 @@ def get_learning_content(ledger_path: Path, learning_id: str) -> Optional[str]:
             for learning in block.get("learnings", []):
                 if learning.get("id") == learning_id:
                     return learning.get("content")
-        except Exception:
+        except Exception as e:
+            print(f"[continuous-claude] Warning: Failed to read block {block_file}: {e}", file=sys.stderr)
             continue
 
     return None
@@ -1077,7 +1085,8 @@ def analyze_session(
             _save(insights, insights_dir)
 
         return insights.to_dict()
-    except Exception:
+    except Exception as e:
+        print(f"[continuous-claude] Warning: Session analysis failed: {e}", file=sys.stderr)
         return None
 
 
@@ -1102,8 +1111,67 @@ def insights_to_learnings(insights_dict: dict) -> list[dict]:
             key_decisions=insights_dict.get("key_decisions", []),
         )
         return insights.to_learnings()
-    except Exception:
+    except Exception as e:
+        print(f"[continuous-claude] Warning: Failed to convert insights to learnings: {e}", file=sys.stderr)
         return []
+
+
+# -----------------------------------------------------------------------------
+# Unified learning extraction and storage
+# -----------------------------------------------------------------------------
+
+def extract_and_store_learnings(
+    transcript_text: str,
+    cwd: str,
+    session_id: str,
+    session_suffix: str = "",
+) -> Optional[dict]:
+    """Extract learnings from transcript text and store them in the ledger.
+
+    This is the unified function for learning extraction used by both
+    session_end.py and pre_compact.py hooks.
+
+    Args:
+        transcript_text: The text content from which to extract learnings
+                        (typically assistant messages from transcript).
+        cwd: Current working directory for determining ledger path.
+        session_id: Session identifier for the block.
+        session_suffix: Optional suffix to append to session_id (e.g., "-precompact").
+
+    Returns:
+        The created block dictionary, or None if no learnings were extracted.
+    """
+    # Extract learnings from the text
+    learnings = extract_learnings(transcript_text)
+
+    if not learnings:
+        return None
+
+    # Determine project directory
+    project_dir = Path(cwd) if cwd else Path.cwd()
+
+    # Check if we're in a project with a .claude directory or project files
+    if (
+        (project_dir / ".claude").exists()
+        or (project_dir / "pyproject.toml").exists()
+        or (project_dir / "package.json").exists()
+    ):
+        ledger_path = get_ledger_path(str(project_dir), is_global=False)
+    else:
+        # Use global ledger
+        ledger_path = get_ledger_path(None, is_global=True)
+
+    # Append block with optional session suffix
+    block_session_id = session_id + session_suffix if session_suffix else session_id
+    block = append_block(ledger_path, block_session_id, learnings)
+
+    if block:
+        print(
+            f"[continuous-claude] Extracted {len(learnings)} learnings -> block {block['id']}",
+            file=sys.stderr,
+        )
+
+    return block
 
 
 # -----------------------------------------------------------------------------
@@ -1155,4 +1223,6 @@ __all__ = [
     # Session analysis
     "analyze_session",
     "insights_to_learnings",
+    # Unified learning extraction
+    "extract_and_store_learnings",
 ]
