@@ -144,8 +144,8 @@ class HandoffManager:
         """
         session_dir = self._ensure_handoffs_dir(handoff.session_id)
 
-        # Create filename with timestamp
-        timestamp_str = handoff.timestamp.strftime("%Y%m%d-%H%M%S")
+        # Create filename with timestamp (includes microseconds to prevent race conditions)
+        timestamp_str = handoff.timestamp.strftime("%Y%m%d-%H%M%S-%f")
         filename = f"handoff-{timestamp_str}.md"
         file_path = session_dir / filename
 

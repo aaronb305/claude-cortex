@@ -761,48 +761,51 @@ class Ledger:
         unique = []
         skipped = []
 
-        # Read reinforcements once at the start
-        reinforcements = self._read_json(self.reinforcements_file)
-        learnings_data = reinforcements.get("learnings", {})
+        # Use exclusive lock for the entire read-modify-write operation
+        with file_lock(self.reinforcements_file, exclusive=True):
+            with open(self.reinforcements_file) as f:
+                reinforcements = json.load(f)
+            learnings_data = reinforcements.get("learnings", {})
 
-        # Build content_hash -> learning_id lookup for O(1) duplicate detection
-        hash_to_id: dict[str, str] = {}
-        for learning_id, data in learnings_data.items():
-            content_hash = data.get("content_hash")
-            if content_hash:
-                hash_to_id[content_hash] = learning_id
+            # Build content_hash -> learning_id lookup for O(1) duplicate detection
+            hash_to_id: dict[str, str] = {}
+            for learning_id, data in learnings_data.items():
+                content_hash = data.get("content_hash")
+                if content_hash:
+                    hash_to_id[content_hash] = learning_id
 
-        # Track whether we need to write back reinforcements
-        reinforcements_modified = False
+            # Track whether we need to write back reinforcements
+            reinforcements_modified = False
 
-        for learning in learnings:
-            # Ensure content_hash is computed
-            if learning.content_hash is None:
-                learning.content_hash = compute_content_hash(learning.content)
+            for learning in learnings:
+                # Ensure content_hash is computed
+                if learning.content_hash is None:
+                    learning.content_hash = compute_content_hash(learning.content)
 
-            # Check for existing duplicate using the lookup table
-            existing_id = hash_to_id.get(learning.content_hash)
+                # Check for existing duplicate using the lookup table
+                existing_id = hash_to_id.get(learning.content_hash)
 
-            if existing_id:
-                skipped.append(existing_id)
+                if existing_id:
+                    skipped.append(existing_id)
 
-                if merge_duplicates and existing_id in learnings_data:
-                    # Boost confidence of existing learning (discovery reinforcement)
-                    current_conf = learnings_data[existing_id]["confidence"]
-                    # Apply a small boost (0.05) capped at 1.0
-                    new_conf = min(1.0, current_conf + 0.05)
-                    learnings_data[existing_id]["confidence"] = new_conf
-                    learnings_data[existing_id]["last_updated"] = datetime.now(timezone.utc).isoformat()
-                    learnings_data[existing_id]["rediscovery_count"] = (
-                        learnings_data[existing_id].get("rediscovery_count", 0) + 1
-                    )
-                    reinforcements_modified = True
-            else:
-                unique.append(learning)
+                    if merge_duplicates and existing_id in learnings_data:
+                        # Boost confidence of existing learning (discovery reinforcement)
+                        current_conf = learnings_data[existing_id]["confidence"]
+                        # Apply a small boost (0.05) capped at 1.0
+                        new_conf = min(1.0, current_conf + 0.05)
+                        learnings_data[existing_id]["confidence"] = new_conf
+                        learnings_data[existing_id]["last_updated"] = datetime.now(timezone.utc).isoformat()
+                        learnings_data[existing_id]["rediscovery_count"] = (
+                            learnings_data[existing_id].get("rediscovery_count", 0) + 1
+                        )
+                        reinforcements_modified = True
+                else:
+                    unique.append(learning)
 
-        # Write back reinforcements once if any duplicates were merged
-        if reinforcements_modified:
-            self._write_json(self.reinforcements_file, reinforcements)
+            # Write back reinforcements once if any duplicates were merged
+            if reinforcements_modified:
+                with open(self.reinforcements_file, "w") as f:
+                    json.dump(reinforcements, f, indent=2, default=str)
 
         return unique, skipped
 
@@ -933,7 +936,9 @@ class Ledger:
             return base_confidence
 
         days_since_applied = (datetime.now(timezone.utc) - last_applied).days
-        decay_factor = max(0.5, 1.0 - (days_since_applied / 180.0))
+        # Exponential decay with 180-day half-life and 0.5 minimum floor
+        # (same formula as get_effective_confidence)
+        decay_factor = max(0.5, 0.5 ** (days_since_applied / 180.0))
 
         return base_confidence * decay_factor
 

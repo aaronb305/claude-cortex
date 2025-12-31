@@ -84,6 +84,11 @@ def run(
     stale_threshold: int,
 ):
     """Run continuous Claude with the given prompt."""
+    # Validate prompt
+    if not prompt or not prompt.strip():
+        console.print("[red]Error: prompt cannot be empty[/red]")
+        raise SystemExit(1)
+
     # Validate numeric parameters
     if max_iterations <= 0:
         console.print("[red]Error: --max-iterations must be positive[/red]")

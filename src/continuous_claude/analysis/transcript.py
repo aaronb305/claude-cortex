@@ -318,8 +318,8 @@ class TranscriptAnalyzer:
 
     def _extract_json_from_text(self, text: str) -> Optional[dict]:
         """Extract JSON object from text that may contain other content."""
-        # Try to find JSON block
-        json_match = re.search(r'\{[\s\S]*\}', text)
+        # Try to find JSON block (non-greedy to prevent catastrophic backtracking)
+        json_match = re.search(r'\{[\s\S]*?\}', text)
         if json_match:
             try:
                 return json.loads(json_match.group())

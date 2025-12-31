@@ -321,7 +321,19 @@ class LedgerSync:
             return parent == current_head or parent in added or parent is None
 
         # Iteratively add blocks in order
+        max_iterations = len(blocks) + 1  # At most one iteration per block + 1
+        iterations = 0
+
         while len(ordered) < len(blocks):
+            iterations += 1
+            if iterations > max_iterations:
+                # Circular reference or corrupt data detected
+                for block in blocks:
+                    if block["id"] not in added:
+                        ordered.append(block)
+                        added.add(block["id"])
+                break
+
             added_this_round = False
             for block in blocks:
                 if block["id"] not in added and can_add(block):
@@ -627,6 +639,13 @@ def import_ledger(archive_path: Path, ledger_path: Path) -> SyncResult:
             if sys.version_info >= (3, 12):
                 tar.extractall(temp_path, filter="data")
             else:
+                # Manual path traversal protection for Python < 3.12
+                for member in tar.getmembers():
+                    member_path = Path(temp_path) / member.name
+                    try:
+                        member_path.resolve().relative_to(Path(temp_path).resolve())
+                    except ValueError:
+                        raise ValueError(f"Archive member '{member.name}' attempts path traversal - rejected for security")
                 tar.extractall(temp_path)
 
         # Ensure target ledger exists

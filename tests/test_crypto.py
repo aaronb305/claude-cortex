@@ -90,8 +90,9 @@ class TestKeyIdFormat:
         keypair = manager.generate_keypair(identity)
 
         assert len(keypair.key_id) == 6
-        assert keypair.key_id.isupper()
+        # Verify uppercase hex format (isupper() returns False for all-digit strings)
         assert all(c in "0123456789ABCDEF" for c in keypair.key_id)
+        assert keypair.key_id == keypair.key_id.upper()  # Ensure it's uppercase
 
     def test_compute_key_id_consistency(self):
         """Same public key should produce same key ID."""
@@ -103,7 +104,7 @@ class TestKeyIdFormat:
 
         assert key_id_1 == key_id_2
         assert len(key_id_1) == 6
-        assert key_id_1.isupper()
+        assert key_id_1 == key_id_1.upper()  # Ensure uppercase (isupper() fails on all-digit strings)
 
 
 class TestGenerateKeypair:

@@ -104,7 +104,7 @@ class TestHandoffSaving:
         assert saved_path.exists()
         assert saved_path.parent.name == "session-abc"
         assert saved_path.parent.parent.name == "handoffs"
-        assert saved_path.name == "handoff-20240115-103045.md"
+        assert saved_path.name == "handoff-20240115-103045-000000.md"
 
     def test_save_handoff_creates_directories_if_needed(self, project_dir):
         """Should create .claude/handoffs/<session_id> directories."""
@@ -137,7 +137,7 @@ class TestHandoffSaving:
 
         saved_path = manager.save_handoff(handoff)
 
-        assert saved_path.name == "handoff-20240305-081530.md"
+        assert saved_path.name == "handoff-20240305-081530-000000.md"
 
     def test_save_handoff_writes_valid_markdown(self, project_dir):
         """Should write valid markdown content to the file."""

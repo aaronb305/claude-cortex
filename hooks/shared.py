@@ -212,7 +212,8 @@ def file_lock(path: Path, exclusive: bool = True):
     Yields:
         The file handle with the lock held.
     """
-    lock_path = path.with_suffix(path.suffix + ".lock")
+    # Use hidden lock file pattern (matches chain.py implementation)
+    lock_path = path.parent / f".{path.name}.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
     lock_file = open(lock_path, "w")
