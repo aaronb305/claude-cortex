@@ -459,28 +459,34 @@ async def maybe_run_llm_analysis(transcript: str, session_id: str):
 
 ## Implementation Order
 
-### Sprint 1: Token Efficiency + MCP (Week 1)
-- [ ] Reduce SessionStart injection limits
-- [ ] Add configuration file support
-- [ ] Make orchestration conditional
-- [ ] Create MCP server with search tools
-- [ ] Add `.mcp.json` configuration
-- [ ] Update install.sh
+### Sprint 1: Token Efficiency + MCP ✅
+- [x] Reduce SessionStart injection limits
+- [x] Add configuration file support
+- [x] Make orchestration conditional
+- [x] Create MCP server with search tools
+- [x] Add `.mcp.json` configuration
+- [x] Update install.sh
 
-### Sprint 2: Privacy + Capture (Week 2)
-- [ ] Add PrivacyLevel to Learning model
-- [ ] Parse privacy suffix in extraction
-- [ ] Filter private learnings from promotion
-- [ ] Implement confidence weighting by source
-- [ ] Add optional LLM analysis flag
+### Sprint 2: Privacy + Capture ✅
+- [x] Add PrivacyLevel to Learning model
+- [x] Parse privacy suffix in extraction
+- [x] Filter private learnings from promotion
+- [x] Implement confidence weighting by source
+- [x] Add optional LLM analysis flag
 
-### Sprint 3: TUI Dashboard (Week 3)
-- [ ] Set up Bun project in `tui/`
-- [ ] Implement basic learning list view
-- [ ] Add search/filter functionality
-- [ ] Add outcome recording
-- [ ] Integrate with CLI/MCP
-- [ ] Add to install.sh
+### Sprint 3: TUI Dashboard ✅
+- [x] Set up Bun project in `tui/`
+- [x] Implement basic learning list view
+- [x] Add search/filter functionality
+- [x] Add outcome recording
+- [x] Integrate with CLI/MCP
+- [x] Add to install.sh
+
+---
+
+## Status: COMPLETE
+
+All phases have been implemented as of 2025-12-31. This roadmap is now archived.
 
 ---
 

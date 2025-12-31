@@ -29,6 +29,50 @@ A blockchain-style ledger memory system with performance-based reinforcement lea
 | `[ERROR]` | Mistakes to avoid | Don't use sync calls in async handler |
 | `[PATTERN]` | Reusable solutions | Repository pattern for data access |
 
+### Privacy Suffixes
+
+Control where learnings are stored with optional suffixes:
+
+| Suffix | Behavior |
+|--------|----------|
+| `[DISCOVERY]` | Normal - can be promoted to global |
+| `[DISCOVERY:project]` | Stays in project ledger only |
+| `[DISCOVERY:private]` | Captured but never persisted |
+| `[DISCOVERY:redacted]` | Logged that something was redacted |
+
+### MCP Tools
+
+Low-latency STDIO-based tools for fast ledger access (~10ms vs ~150ms for CLI):
+
+| Tool | Purpose |
+|------|---------|
+| `search_learnings` | Full-text search with category/confidence filters |
+| `get_learning` | Get full learning details by ID |
+| `record_outcome` | Record success/partial/failure outcomes |
+| `list_learnings` | List learnings sorted by confidence |
+| `ledger_stats` | Get ledger statistics |
+
+### TUI Dashboard
+
+Terminal-based dashboard for browsing and managing learnings:
+
+```bash
+cd tui && bun install && bun run tui
+```
+
+Features: Vim-style navigation, real-time search, confidence visualization, outcome recording.
+
+### Confidence-Weighted Extraction
+
+Learnings receive different default confidence based on their source:
+
+| Source | Default Confidence |
+|--------|-------------------|
+| User-tagged `[DISCOVERY]` etc | 0.70 |
+| Stop hook pattern detection | 0.50 |
+| LLM session analysis | 0.40 |
+| Consensus (multiple sources) | 0.85 |
+
 ## Installation
 
 ### Quick Install
@@ -70,9 +114,11 @@ uv run cclaude --help
 
 Just use Claude as usual - hooks automatically:
 - **SessionStart**: Inject high-confidence learnings from ledger
-- **PostToolUse**: Nudge continuation when tasks remain
-- **PreCompact**: Extract learnings before context compaction
-- **SessionEnd**: Extract new learnings from transcript
+- **PostToolUse**: Nudge continuation when tasks remain, track learning references
+- **PreCompact**: Extract learnings + save handoff/summary before context compaction
+- **SessionEnd**: Extract new learnings from transcript, suggest outcome recording
+- **SubagentStop**: Track agent deployments and effectiveness
+- **Stop**: Nudge for immediate learning tagging after significant work
 
 ### CLI Commands
 
@@ -166,6 +212,7 @@ All agents use **opus** as the default model for maximum capability.
 | `learning-extractor` | "extract learnings", end of session | Analyze and categorize insights |
 | `session-continuity` | "resume my work", "what was I working on" | Manage session transitions and handoffs |
 | `outcome-tracker` | "record outcome", "this worked/didn't work" | Track outcomes to improve confidence scores |
+| `task-orchestrator` | "decompose task", "plan implementation" | Break down complex tasks and coordinate agents |
 
 ### Skills
 
@@ -175,7 +222,6 @@ All agents use **opus** as the default model for maximum capability.
 | `learning-capture` | Manually capture insights to ledger |
 | `handoff-management` | Save/load work-in-progress state |
 | `search-learnings` | Full-text search across learnings |
-| `continuous-execution` | Run autonomous iteration mode |
 | `outcome-prompt` | Suggest outcome recording for applied learnings |
 
 ## Architecture
@@ -197,9 +243,11 @@ All agents use **opus** as the default model for maximum capability.
 │   └── semantic.db            # Semantic search vectors (optional)
 ├── hooks/
 │   ├── session_start.py       # Inject ledger context
-│   ├── post_tool_use.py       # Continuation nudges
-│   ├── pre_compact.py         # Pre-compaction extraction
-│   └── session_end.py         # Extract learnings
+│   ├── post_tool_use.py       # Continuation nudges + learning tracking
+│   ├── pre_compact.py         # Pre-compaction extraction + handoff
+│   ├── session_end.py         # Extract learnings + outcome suggestions
+│   ├── subagent_stop.py       # Agent deployment tracking
+│   └── stop.py                # Learning tagging nudges
 └── settings.json              # Hook configuration
 
 project/.claude/
@@ -216,8 +264,8 @@ project/.claude/
 
 ~/projects/claude-cortex/
 ├── .claude-plugin/plugin.json # Plugin manifest
-├── agents/                    # Custom agents (11 total, opus model)
-├── skills/                    # User-invocable skills (6)
+├── agents/                    # Custom agents (12 total, opus model)
+├── skills/                    # User-invocable skills (5)
 ├── hooks/                     # Hook implementations
 ├── src/claude_cortex/         # Python package
 │   ├── ledger/                # Blockchain ledger implementation
@@ -305,7 +353,9 @@ Hooks are registered in `~/.claude/settings.json`:
     "SessionStart": [{"command": "python ~/.claude/hooks/session_start.py"}],
     "PostToolUse": [{"command": "python ~/.claude/hooks/post_tool_use.py"}],
     "PreCompact": [{"command": "python ~/.claude/hooks/pre_compact.py"}],
-    "SessionEnd": [{"command": "python ~/.claude/hooks/session_end.py"}]
+    "SessionEnd": [{"command": "python ~/.claude/hooks/session_end.py"}],
+    "SubagentStop": [{"command": "python ~/.claude/hooks/subagent_stop.py"}],
+    "Stop": [{"command": "python ~/.claude/hooks/stop.py"}]
   }
 }
 ```
@@ -346,7 +396,7 @@ This project was inspired by [Continuous-Claude-v2](https://github.com/parcadei/
 
 ## License
 
-MIT
+MIT License - see [LICENSE](LICENSE) for details.
 
 ## Contributing
 
