@@ -7,7 +7,26 @@
   },
   "license": "MIT",
   "keywords": ["ledger", "memory", "learning", "reinforcement", "blockchain"],
-  "agents": "./agents/*.md",
-  "skills": "./skills/*/SKILL.md",
+  "agents": [
+    "./agents/bug-investigator.md",
+    "./agents/code-implementer.md",
+    "./agents/continuous-runner.md",
+    "./agents/doc-writer.md",
+    "./agents/knowledge-retriever.md",
+    "./agents/learning-extractor.md",
+    "./agents/outcome-tracker.md",
+    "./agents/refactorer.md",
+    "./agents/research-agent.md",
+    "./agents/session-continuity.md",
+    "./agents/task-orchestrator.md",
+    "./agents/test-writer.md"
+  ],
+  "skills": [
+    "./skills/handoff-management/SKILL.md",
+    "./skills/learning-capture/SKILL.md",
+    "./skills/ledger-knowledge/SKILL.md",
+    "./skills/outcome-prompt/SKILL.md",
+    "./skills/search-learnings/SKILL.md"
+  ],
   "mcpServers": "./.mcp.json"
 }
