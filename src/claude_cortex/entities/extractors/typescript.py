@@ -1,6 +1,7 @@
 """TypeScript/JavaScript entity extractor using tree-sitter."""
 
 import hashlib
+import threading
 from pathlib import Path
 
 from claude_cortex.entities.models import (
@@ -11,40 +12,45 @@ from claude_cortex.entities.models import (
 )
 from claude_cortex.entities.extractors.base import BaseExtractor
 
-# Lazy import tree-sitter
+# Lazy import tree-sitter (thread-safe)
 _parser = None
 _tsx_parser = None
 _language = None
 _tsx_language = None
+_parser_lock = threading.Lock()
 
 
 def _get_parser(use_tsx: bool = False):
-    """Lazily initialize the TypeScript tree-sitter parser."""
+    """Lazily initialize the TypeScript tree-sitter parser (thread-safe)."""
     global _parser, _tsx_parser, _language, _tsx_language
 
     if use_tsx:
         if _tsx_parser is None:
-            try:
-                from tree_sitter_language_pack import get_parser, get_language
-                _tsx_parser = get_parser("tsx")
-                _tsx_language = get_language("tsx")
-            except ImportError:
-                raise ImportError(
-                    "tree-sitter-language-pack is required for entity extraction. "
-                    "Install with: uv add tree-sitter-language-pack"
-                )
+            with _parser_lock:
+                if _tsx_parser is None:
+                    try:
+                        from tree_sitter_language_pack import get_parser, get_language
+                        _tsx_parser = get_parser("tsx")
+                        _tsx_language = get_language("tsx")
+                    except ImportError:
+                        raise ImportError(
+                            "tree-sitter-language-pack is required for entity extraction. "
+                            "Install with: uv add tree-sitter-language-pack"
+                        )
         return _tsx_parser, _tsx_language
     else:
         if _parser is None:
-            try:
-                from tree_sitter_language_pack import get_parser, get_language
-                _parser = get_parser("typescript")
-                _language = get_language("typescript")
-            except ImportError:
-                raise ImportError(
-                    "tree-sitter-language-pack is required for entity extraction. "
-                    "Install with: uv add tree-sitter-language-pack"
-                )
+            with _parser_lock:
+                if _parser is None:
+                    try:
+                        from tree_sitter_language_pack import get_parser, get_language
+                        _parser = get_parser("typescript")
+                        _language = get_language("typescript")
+                    except ImportError:
+                        raise ImportError(
+                            "tree-sitter-language-pack is required for entity extraction. "
+                            "Install with: uv add tree-sitter-language-pack"
+                        )
         return _parser, _language
 
 
@@ -55,6 +61,49 @@ def _run_query(query, root_node):
     return cursor.matches(root_node)
 
 
+# Query string constants (shared between TS and TSX)
+_FUNCTION_QUERY = """
+    (function_declaration
+        name: (identifier) @function.name) @function.def
+
+    (variable_declarator
+        name: (identifier) @function.name
+        value: (arrow_function)) @function.def
+
+    (method_definition
+        name: (property_identifier) @function.name) @function.def
+"""
+
+_CLASS_QUERY = """
+    (class_declaration
+        name: (type_identifier) @class.name
+        (class_heritage
+            (extends_clause
+                value: (_) @class.extends))?
+        body: (class_body) @class.body) @class.def
+"""
+
+_IMPORT_QUERY = """
+    (import_statement
+        source: (string) @import.source) @import.stmt
+"""
+
+_EXPORT_QUERY = """
+    (export_statement
+        declaration: (function_declaration
+            name: (identifier) @export.name)?) @export.stmt
+
+    (export_statement
+        declaration: (class_declaration
+            name: (type_identifier) @export.name)?) @export.stmt
+
+    (export_statement
+        declaration: (lexical_declaration
+            (variable_declarator
+                name: (identifier) @export.name))?) @export.stmt
+"""
+
+
 class TypeScriptExtractor(BaseExtractor):
     """Extracts entities and relationships from TypeScript/JavaScript files."""
 
@@ -62,66 +111,26 @@ class TypeScriptExtractor(BaseExtractor):
     EXTENSIONS = {".ts", ".tsx", ".js", ".jsx"}
 
     def __init__(self):
-        self._function_query = None
-        self._class_query = None
-        self._import_query = None
-        self._export_query = None
-        self._last_language = None
+        # Cache queries separately for TS and TSX to avoid recompilation
+        self._ts_queries: dict = {}
+        self._tsx_queries: dict = {}
 
     def _compile_queries(self, use_tsx: bool = False):
-        """Lazily compile tree-sitter queries."""
-        current_lang = "tsx" if use_tsx else "typescript"
-        if self._function_query is not None and self._last_language == current_lang:
-            return
+        """Lazily compile tree-sitter queries (cached per language)."""
+        cache = self._tsx_queries if use_tsx else self._ts_queries
+
+        if cache:
+            return cache
 
         from tree_sitter import Query
         _, language = _get_parser(use_tsx)
-        self._last_language = current_lang
 
-        # Function declarations and arrow functions
-        self._function_query = Query(language, """
-            (function_declaration
-                name: (identifier) @function.name) @function.def
+        cache["function"] = Query(language, _FUNCTION_QUERY)
+        cache["class"] = Query(language, _CLASS_QUERY)
+        cache["import"] = Query(language, _IMPORT_QUERY)
+        cache["export"] = Query(language, _EXPORT_QUERY)
 
-            (variable_declarator
-                name: (identifier) @function.name
-                value: (arrow_function)) @function.def
-
-            (method_definition
-                name: (property_identifier) @function.name) @function.def
-        """)
-
-        # Class declarations
-        self._class_query = Query(language, """
-            (class_declaration
-                name: (type_identifier) @class.name
-                (class_heritage
-                    (extends_clause
-                        value: (_) @class.extends))?
-                body: (class_body) @class.body) @class.def
-        """)
-
-        # Import statements
-        self._import_query = Query(language, """
-            (import_statement
-                source: (string) @import.source) @import.stmt
-        """)
-
-        # Export statements
-        self._export_query = Query(language, """
-            (export_statement
-                declaration: (function_declaration
-                    name: (identifier) @export.name)?) @export.stmt
-
-            (export_statement
-                declaration: (class_declaration
-                    name: (type_identifier) @export.name)?) @export.stmt
-
-            (export_statement
-                declaration: (lexical_declaration
-                    (variable_declarator
-                        name: (identifier) @export.name))?) @export.stmt
-        """)
+        return cache
 
     def extract_file(self, file_path: Path) -> ExtractionResult:
         """Extract entities and relationships from a TypeScript/JavaScript file."""
@@ -146,7 +155,7 @@ class TypeScriptExtractor(BaseExtractor):
 
         try:
             parser, _ = _get_parser(use_tsx)
-            self._compile_queries(use_tsx)
+            queries = self._compile_queries(use_tsx)
             tree = parser.parse(content)
         except Exception as e:
             return ExtractionResult(
@@ -179,7 +188,7 @@ class TypeScriptExtractor(BaseExtractor):
         exported_names: set[str] = set()
 
         # Extract exports first to know what's exported
-        for pattern_idx, captures in _run_query(self._export_query, tree.root_node):
+        for pattern_idx, captures in _run_query(queries["export"], tree.root_node):
             for capture_name, node in captures.items():
                 nodes = node if isinstance(node, list) else [node]
                 for n in nodes:
@@ -187,7 +196,7 @@ class TypeScriptExtractor(BaseExtractor):
                         exported_names.add(n.text.decode("utf-8"))
 
         # Extract classes
-        for pattern_idx, captures in _run_query(self._class_query, tree.root_node):
+        for pattern_idx, captures in _run_query(queries["class"], tree.root_node):
             class_node = None
             class_name = None
             extends = None
@@ -242,7 +251,7 @@ class TypeScriptExtractor(BaseExtractor):
                     ))
 
         # Extract functions
-        for pattern_idx, captures in _run_query(self._function_query, tree.root_node):
+        for pattern_idx, captures in _run_query(queries["function"], tree.root_node):
             func_node = None
             func_name = None
 
@@ -298,7 +307,7 @@ class TypeScriptExtractor(BaseExtractor):
                 ))
 
         # Extract imports
-        for pattern_idx, captures in _run_query(self._import_query, tree.root_node):
+        for pattern_idx, captures in _run_query(queries["import"], tree.root_node):
             import_node = None
             source = None
 

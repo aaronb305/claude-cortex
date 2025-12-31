@@ -1,10 +1,13 @@
 """Entity graph models for code structure tracking."""
 
+import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, Any
-import json
+
+logger = logging.getLogger(__name__)
 
 
 class EntityType(str, Enum):
@@ -54,8 +57,12 @@ class Entity:
         if row["metadata"]:
             try:
                 metadata = json.loads(row["metadata"])
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "Failed to parse metadata for entity %s: %s",
+                    row.get("qualified_name", "unknown"),
+                    e,
+                )
 
         return cls(
             id=row["id"],
@@ -107,8 +114,12 @@ class Relationship:
         if row["metadata"]:
             try:
                 metadata = json.loads(row["metadata"])
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "Failed to parse metadata for relationship %s: %s",
+                    row.get("id", "unknown"),
+                    e,
+                )
 
         return cls(
             id=row["id"],

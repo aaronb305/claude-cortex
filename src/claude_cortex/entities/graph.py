@@ -194,7 +194,7 @@ class EntityGraph:
             if source_id and target_id:
                 conn.execute(
                     """
-                    INSERT INTO relationships (
+                    INSERT OR IGNORE INTO relationships (
                         source_id, target_id, relationship_type, weight, metadata
                     ) VALUES (?, ?, ?, ?, ?)
                     """,
@@ -343,11 +343,14 @@ class EntityGraph:
 
         Args:
             entity_id: The source entity's database ID
-            depth: Depth of traversal (1 = direct only)
+            depth: Depth of traversal (1 = direct only, max 10)
 
         Returns:
             List of Relationship objects
         """
+        # Validate depth to prevent excessive recursion
+        depth = max(1, min(depth, 10))
+
         if depth == 1:
             cursor = self.connection.execute(
                 """
@@ -406,11 +409,14 @@ class EntityGraph:
 
         Args:
             entity_id: The target entity's database ID
-            depth: Depth of traversal (1 = direct only)
+            depth: Depth of traversal (1 = direct only, max 10)
 
         Returns:
             List of Relationship objects
         """
+        # Validate depth to prevent excessive recursion
+        depth = max(1, min(depth, 10))
+
         if depth == 1:
             cursor = self.connection.execute(
                 """
@@ -467,23 +473,41 @@ class EntityGraph:
         """Full-text search for entities by name.
 
         Args:
-            query: Search query
+            query: Search query (FTS5 special chars are escaped for literal matching)
             limit: Maximum results
 
         Returns:
             List of matching Entity objects
         """
-        cursor = self.connection.execute(
-            """
-            SELECT e.* FROM entities e
-            JOIN entities_fts fts ON e.id = fts.rowid
-            WHERE entities_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (query, limit),
-        )
-        return [Entity.from_row(row) for row in cursor.fetchall()]
+        # Escape FTS5 special characters for literal matching
+        # FTS5 special: " * ( ) - : ^ OR AND NOT NEAR
+        escaped_query = query.replace('"', '""')
+        # Wrap in quotes for literal phrase matching
+        safe_query = f'"{escaped_query}"'
+
+        try:
+            cursor = self.connection.execute(
+                """
+                SELECT e.* FROM entities e
+                JOIN entities_fts fts ON e.id = fts.rowid
+                WHERE entities_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (safe_query, limit),
+            )
+            return [Entity.from_row(row) for row in cursor.fetchall()]
+        except Exception:
+            # Fall back to LIKE query if FTS5 fails
+            cursor = self.connection.execute(
+                """
+                SELECT * FROM entities
+                WHERE name LIKE ? OR qualified_name LIKE ?
+                LIMIT ?
+                """,
+                (f"%{query}%", f"%{query}%", limit),
+            )
+            return [Entity.from_row(row) for row in cursor.fetchall()]
 
     def get_stats(self) -> dict:
         """Get statistics about the entity graph.

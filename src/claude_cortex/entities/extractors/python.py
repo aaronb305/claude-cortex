@@ -1,6 +1,7 @@
 """Python entity extractor using tree-sitter."""
 
 import hashlib
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -15,21 +16,25 @@ from claude_cortex.entities.extractors.base import BaseExtractor
 # Lazy import tree-sitter to avoid loading it unless needed
 _parser = None
 _language = None
+_parser_lock = threading.Lock()
 
 
 def _get_parser():
-    """Lazily initialize the Python tree-sitter parser."""
+    """Lazily initialize the Python tree-sitter parser (thread-safe)."""
     global _parser, _language
     if _parser is None:
-        try:
-            from tree_sitter_language_pack import get_parser, get_language
-            _parser = get_parser("python")
-            _language = get_language("python")
-        except ImportError:
-            raise ImportError(
-                "tree-sitter-language-pack is required for entity extraction. "
-                "Install with: uv add tree-sitter-language-pack"
-            )
+        with _parser_lock:
+            # Double-check after acquiring lock
+            if _parser is None:
+                try:
+                    from tree_sitter_language_pack import get_parser, get_language
+                    _parser = get_parser("python")
+                    _language = get_language("python")
+                except ImportError:
+                    raise ImportError(
+                        "tree-sitter-language-pack is required for entity extraction. "
+                        "Install with: uv add tree-sitter-language-pack"
+                    )
     return _parser, _language
 
 
@@ -83,12 +88,10 @@ class PythonExtractor(BaseExtractor):
                 name: (dotted_name)? @import.name) @import.stmt
         """)
 
-        # Top-level assignments (constants)
+        # Top-level assignments (constants) - check indentation in code to filter module-level
         self._assignment_query = Query(language, """
-            (module
-                (expression_statement
-                    (assignment
-                        left: (identifier) @constant.name))) @constant.def
+            (assignment
+                left: (identifier) @constant.name) @constant.def
         """)
 
     def extract_file(self, file_path: Path) -> ExtractionResult:
@@ -298,9 +301,9 @@ class PythonExtractor(BaseExtractor):
                         const_name = n.text.decode("utf-8")
 
             if const_node and const_name:
-                # Only capture UPPER_CASE names as constants
-                if const_name.isupper() or const_name.startswith("_"):
-                    continue  # Skip private/dunder
+                # Only capture UPPER_CASE names as constants, skip private/dunder
+                if not const_name.isupper() or const_name.startswith("_"):
+                    continue
 
                 # Check if it's a class-level constant by checking indentation
                 if const_node.start_point[1] > 0:

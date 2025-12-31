@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS relationships (
     weight REAL DEFAULT 1.0,          -- For future ranking
     metadata TEXT,                    -- JSON blob (line number, context)
     FOREIGN KEY (source_id) REFERENCES entities(id) ON DELETE CASCADE,
-    FOREIGN KEY (target_id) REFERENCES entities(id) ON DELETE CASCADE
+    FOREIGN KEY (target_id) REFERENCES entities(id) ON DELETE CASCADE,
+    UNIQUE (source_id, target_id, relationship_type)
 );
 
 -- Indexes for efficient queries
@@ -73,7 +74,8 @@ CREATE TABLE IF NOT EXISTS learning_entities (
     relevance_type TEXT NOT NULL,     -- 'about', 'modifies', 'references'
     confidence REAL DEFAULT 0.5,
     created_at TEXT,
-    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
+    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+    UNIQUE (learning_id, entity_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_learning_entities_learning ON learning_entities(learning_id);

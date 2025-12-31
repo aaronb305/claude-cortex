@@ -698,3 +698,244 @@ class TestEntityGraphContextManager:
         # Creating new graph should work
         with EntityGraph(db_path=db_path) as graph2:
             assert graph2.get_stats()["functions"] >= 1
+
+
+# =============================================================================
+# Regression Tests for Bug Fixes
+# =============================================================================
+
+
+class TestConstantExtraction:
+    """Regression tests for constant extraction (Issue #1)."""
+
+    @pytest.fixture
+    def extractor(self):
+        from claude_cortex.entities.extractors.python import PythonExtractor
+        return PythonExtractor()
+
+    def test_uppercase_constants_extracted(self, extractor, temp_dir):
+        """Should extract UPPER_CASE constants (regression for inverted logic bug)."""
+        file_path = temp_dir / "constants.py"
+        file_path.write_text('''
+MAX_SIZE = 100
+MIN_VALUE = 0
+DEFAULT_NAME = "test"
+lowercase_var = 42
+_PRIVATE = "hidden"
+''')
+
+        result = extractor.extract_file(file_path)
+        constants = [e for e in result.entities if e.entity_type == EntityType.CONSTANT]
+
+        # Should find MAX_SIZE, MIN_VALUE, DEFAULT_NAME but not lowercase_var or _PRIVATE
+        constant_names = {c.name for c in constants}
+        assert "MAX_SIZE" in constant_names
+        assert "MIN_VALUE" in constant_names
+        assert "DEFAULT_NAME" in constant_names
+        assert "lowercase_var" not in constant_names
+        assert "_PRIVATE" not in constant_names
+
+    def test_non_uppercase_not_extracted(self, extractor, temp_dir):
+        """Should NOT extract non-uppercase assignments as constants."""
+        file_path = temp_dir / "vars.py"
+        file_path.write_text('''
+my_variable = 100
+anotherOne = "test"
+CamelCase = True
+''')
+
+        result = extractor.extract_file(file_path)
+        constants = [e for e in result.entities if e.entity_type == EntityType.CONSTANT]
+
+        # None of these should be extracted as constants
+        assert len(constants) == 0
+
+
+class TestFTS5SearchSafety:
+    """Regression tests for FTS5 MATCH escaping (Issue #4)."""
+
+    @pytest.fixture
+    def graph_with_entities(self, temp_dir):
+        graph = EntityGraph(db_path=temp_dir / "fts.db")
+        file_path = temp_dir / "searchable.py"
+        file_path.write_text('''
+def calculate_total(): pass
+def search_and_filter(): pass
+def user_name(): pass
+''')
+        graph.index_file(file_path)
+        return graph
+
+    def test_search_with_special_chars(self, graph_with_entities):
+        """Should handle FTS5 special characters safely."""
+        # These should not raise errors
+        graph_with_entities.search('test"query')
+        graph_with_entities.search("test*")
+        graph_with_entities.search("test AND other")
+        graph_with_entities.search("(test)")
+        graph_with_entities.search("test:value")
+
+    def test_search_with_quotes(self, graph_with_entities):
+        """Should handle double quotes in search query."""
+        results = graph_with_entities.search('calculate"total')
+        # Should not crash, may return empty results
+        assert isinstance(results, list)
+
+
+class TestDuplicateRelationships:
+    """Regression tests for duplicate relationship prevention (Issue #3)."""
+
+    @pytest.fixture
+    def graph(self, temp_dir):
+        return EntityGraph(db_path=temp_dir / "dup.db")
+
+    def test_reindex_does_not_duplicate_relationships(self, graph, temp_dir):
+        """Re-indexing should not create duplicate relationships."""
+        file_path = temp_dir / "module.py"
+        file_path.write_text('''
+import os
+import sys
+
+class MyClass:
+    def method(self): pass
+''')
+
+        # Index twice
+        graph.index_file(file_path)
+        graph.index_file(file_path, force=True)
+
+        # Count relationships - should not have duplicates
+        cursor = graph.connection.execute("SELECT COUNT(*) FROM relationships")
+        count1 = cursor.fetchone()[0]
+
+        # Index again
+        graph.index_file(file_path, force=True)
+
+        cursor = graph.connection.execute("SELECT COUNT(*) FROM relationships")
+        count2 = cursor.fetchone()[0]
+
+        # Counts should be the same (no duplicates added)
+        assert count1 == count2
+
+
+class TestDepthValidation:
+    """Regression tests for recursive CTE depth validation (Issue #8)."""
+
+    @pytest.fixture
+    def graph(self, temp_dir):
+        graph = EntityGraph(db_path=temp_dir / "depth.db")
+        file_path = temp_dir / "chain.py"
+        file_path.write_text('''
+class A: pass
+class B(A): pass
+class C(B): pass
+''')
+        graph.index_file(file_path)
+        return graph
+
+    def test_depth_capped_at_max(self, graph):
+        """Should cap depth at 10 even if larger value passed."""
+        # Get an entity ID
+        entities = graph.get_entities_by_type(EntityType.CLASS)
+        if not entities:
+            pytest.skip("No class entities found")
+
+        entity_id = entities[0].id
+
+        # Should not raise error even with excessive depth
+        deps = graph.get_dependencies(entity_id, depth=100)
+        assert isinstance(deps, list)
+
+        dependents = graph.get_dependents(entity_id, depth=100)
+        assert isinstance(dependents, list)
+
+    def test_depth_minimum_is_one(self, graph):
+        """Should use depth=1 even if 0 or negative passed."""
+        entities = graph.get_entities_by_type(EntityType.CLASS)
+        if not entities:
+            pytest.skip("No class entities found")
+
+        entity_id = entities[0].id
+
+        deps = graph.get_dependencies(entity_id, depth=0)
+        assert isinstance(deps, list)
+
+        deps = graph.get_dependencies(entity_id, depth=-5)
+        assert isinstance(deps, list)
+
+
+class TestTypeScriptQueryCaching:
+    """Regression tests for TypeScript query caching (Issue #7)."""
+
+    def test_mixed_ts_tsx_files_no_recompilation_error(self, temp_dir):
+        """Should handle mixed .ts and .tsx files without errors."""
+        from claude_cortex.entities.extractors.typescript import TypeScriptExtractor
+
+        extractor = TypeScriptExtractor()
+
+        # Create mixed files
+        ts_file = temp_dir / "module.ts"
+        ts_file.write_text('function hello(): void {}')
+
+        tsx_file = temp_dir / "component.tsx"
+        tsx_file.write_text('const App = () => <div>Hello</div>;')
+
+        ts_file2 = temp_dir / "util.ts"
+        ts_file2.write_text('export const util = () => {};')
+
+        tsx_file2 = temp_dir / "other.tsx"
+        tsx_file2.write_text('export const Other = () => <span/>;')
+
+        # Extract from alternating file types - should not error
+        result1 = extractor.extract_file(ts_file)
+        result2 = extractor.extract_file(tsx_file)
+        result3 = extractor.extract_file(ts_file2)
+        result4 = extractor.extract_file(tsx_file2)
+
+        # All should extract successfully
+        assert len(result1.errors) == 0
+        assert len(result2.errors) == 0
+        assert len(result3.errors) == 0
+        assert len(result4.errors) == 0
+
+
+class TestJSONMetadataWarning:
+    """Regression tests for JSON metadata error logging (Issue #5)."""
+
+    def test_corrupted_metadata_logs_warning(self, temp_dir, caplog):
+        """Should log warning when metadata JSON is corrupted."""
+        import logging
+        from claude_cortex.entities.models import Entity
+
+        # Create a mock row with corrupted metadata
+        class MockRow(dict):
+            def __getitem__(self, key):
+                if key == "metadata":
+                    return "not valid json {"
+                return super().__getitem__(key)
+
+            def get(self, key, default=None):
+                if key == "metadata":
+                    return "not valid json {"
+                return super().get(key, default)
+
+        mock_row = MockRow({
+            "id": 1,
+            "entity_type": "function",
+            "name": "test",
+            "qualified_name": "/test.py:test",
+            "file_path": "/test.py",
+            "start_line": 1,
+            "end_line": 1,
+            "content_hash": "abc123",
+            "last_indexed": "2024-01-01T00:00:00Z",
+        })
+
+        with caplog.at_level(logging.WARNING, logger="claude_cortex.entities.models"):
+            entity = Entity.from_row(mock_row)
+
+        # Entity should be created with empty metadata
+        assert entity.metadata == {}
+
+        # Warning should be logged
+        assert any("Failed to parse metadata" in record.message for record in caplog.records)
