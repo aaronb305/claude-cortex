@@ -13,7 +13,7 @@ can use `from shared import ...` without modification.
 """
 
 # Constants
-from .constants import LearningCategory
+from .constants import LearningCategory, PrivacyLevel
 
 # Path utilities
 from .paths import get_ledger_path, get_search_db_path
@@ -91,6 +91,7 @@ from .settings import (
 __all__ = [
     # Constants
     "LearningCategory",
+    "PrivacyLevel",
     # Extraction source and confidence weighting
     "ExtractionSource",
     "DEFAULT_SOURCE_CONFIDENCE",

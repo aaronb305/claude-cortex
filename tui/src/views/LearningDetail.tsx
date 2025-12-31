@@ -148,9 +148,11 @@ export function LearningDetail({ learning }: LearningDetailProps) {
         paddingY={1}
         marginBottom={1}
       >
-        <Text color="cyan" bold marginBottom={1}>
-          Content
-        </Text>
+        <Box marginBottom={1}>
+          <Text color="cyan" bold>
+            Content
+          </Text>
+        </Box>
         {contentLines.map((line, i) => (
           <Text key={i} color="white">
             {line}

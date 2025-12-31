@@ -55,11 +55,24 @@ async function runCclaude(
   options: { projectPath?: string } = {}
 ): Promise<string> {
   const projectArgs = options.projectPath ? ["-p", options.projectPath] : [];
-  const cmd = ["uv", "run", "cclaude", ...args, ...projectArgs];
+  const allArgs = [...args, ...projectArgs];
 
   try {
-    const result = await $`${cmd}`.quiet().text();
-    return result.trim();
+    // Use Bun.spawn for proper command execution with array arguments
+    const proc = Bun.spawn(["uv", "run", "cclaude", ...allArgs], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const text = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+      const stderr = await new Response(proc.stderr).text();
+      throw new Error(stderr || `Process exited with code ${exitCode}`);
+    }
+
+    return text.trim();
   } catch (error) {
     if (error instanceof Error) {
       throw new Error(`CLI command failed: ${error.message}`);

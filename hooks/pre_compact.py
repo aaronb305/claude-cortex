@@ -27,10 +27,12 @@ from shared import (
     extract_learnings,
     extract_tasks_from_text,
     get_modified_files,
+    load_settings,
     read_transcript,
     save_handoff,
     write_json,
 )
+from shared.extraction import ExtractionSource
 
 
 # -----------------------------------------------------------------------------
@@ -227,9 +229,20 @@ def main():
     messages = []
 
     if learnings:
+        # Load settings for extraction configuration
+        settings = load_settings(project_dir)
+        extraction_settings = settings.get("extraction", {})
+
         # Use unified function to store learnings
+        # Pre-compact extracts user-tagged learnings just like session_end
         block = extract_and_store_learnings(
-            assistant_text, str(project_dir), session_id, session_suffix="-precompact"
+            assistant_text,
+            str(project_dir),
+            session_id,
+            session_suffix="-precompact",
+            source=ExtractionSource.USER_TAGGED,
+            enable_deep_pass=extraction_settings.get("enable_deep_pass", False),
+            deep_pass_threshold=extraction_settings.get("deep_pass_threshold", 3),
         )
         if block:
             messages.append(f"Captured {len(learnings)} learnings to ledger.")

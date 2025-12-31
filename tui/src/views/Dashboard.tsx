@@ -141,7 +141,12 @@ export function Dashboard({ projectPath, initialView = "list" }: DashboardProps)
   const [learnings, setLearnings] = useState<Learning[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [selectedLearning, setSelectedLearning] = useState<Learning | null>(null);
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState<{
+    totalLearnings: number;
+    byCategory: Record<string, number>;
+    avgConfidence: number;
+    pendingOutcomes: number;
+  }>({
     totalLearnings: 0,
     byCategory: { discovery: 0, decision: 0, error: 0, pattern: 0 },
     avgConfidence: 0,
@@ -162,24 +167,25 @@ export function Dashboard({ projectPath, initialView = "list" }: DashboardProps)
       setLearnings(learningsData);
       setStats(statsData);
 
-      // Update selected learning if we have one
-      if (selectedLearning) {
-        const updated = learningsData.find((l) => l.id === selectedLearning.id);
-        if (updated) setSelectedLearning(updated);
-      } else if (learningsData.length > 0) {
-        setSelectedLearning(learningsData[0]);
-      }
+      // Update selected learning based on current state
+      setSelectedLearning((current) => {
+        if (current) {
+          const updated = learningsData.find((l) => l.id === current.id);
+          return updated || current;
+        }
+        return learningsData[0] || null;
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
       setIsLoading(false);
     }
-  }, [projectPath, selectedLearning]);
+  }, [projectPath]);
 
   // Initial load
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
 
   // Handle keyboard input
   useInput((input, key) => {
@@ -198,17 +204,13 @@ export function Dashboard({ projectPath, initialView = "list" }: DashboardProps)
     switch (view) {
       case "list":
         if (input === "j" || key.downArrow) {
-          setSelectedIndex((prev) => {
-            const next = Math.min(prev + 1, learnings.length - 1);
-            setSelectedLearning(learnings[next] || null);
-            return next;
-          });
+          const next = Math.min(selectedIndex + 1, learnings.length - 1);
+          setSelectedIndex(next);
+          setSelectedLearning(learnings[next] || null);
         } else if (input === "k" || key.upArrow) {
-          setSelectedIndex((prev) => {
-            const next = Math.max(prev - 1, 0);
-            setSelectedLearning(learnings[next] || null);
-            return next;
-          });
+          const next = Math.max(selectedIndex - 1, 0);
+          setSelectedIndex(next);
+          setSelectedLearning(learnings[next] || null);
         } else if (input === "/" || input === "s") {
           setView("search");
         } else if (key.return && selectedLearning) {

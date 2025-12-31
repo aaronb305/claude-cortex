@@ -99,8 +99,8 @@ async def search_learnings(
         # Filter by confidence and limit
         filtered = []
         for r in results:
-            # Get confidence from ledger
-            conf = ledger.get_confidence(r.learning_id)
+            # Get confidence from ledger (use effective confidence with decay)
+            conf = ledger.get_effective_confidence(r.learning_id)
             if conf >= min_confidence:
                 filtered.append({
                     "id": r.learning_id[:8],
@@ -216,7 +216,7 @@ async def record_outcome(
         # Record outcome
         ledger.record_outcome(learning.id, result, comment)
 
-        new_confidence = ledger.get_confidence(learning.id)
+        new_confidence = ledger.get_effective_confidence(learning.id)
 
         return {
             "status": "recorded",
@@ -256,26 +256,26 @@ async def list_learnings(
             return {"learnings": [], "total": 0}
 
         ledger = Ledger(ledger_path)
+        # get_learnings_by_confidence returns list[dict] with keys: id, category, content, confidence, effective_confidence
         all_learnings = ledger.get_learnings_by_confidence(min_confidence, limit=limit * 2)
 
         results = []
         for l in all_learnings:
-            # Filter by category if specified
-            l_category = l.category.value if hasattr(l.category, 'value') else str(l.category)
+            # Filter by category if specified (l is a dict, not Learning object)
+            l_category = l["category"]
             if category and l_category != category.lower():
                 continue
 
             entry = {
-                "id": l.id[:8],
-                "full_id": l.id,
+                "id": l["id"][:8],
+                "full_id": l["id"],
                 "category": l_category,
-                "snippet": l.content[:100],
-                "confidence": round(l.confidence, 2),
+                "snippet": l["content"][:100],
+                "confidence": round(l.get("effective_confidence", l["confidence"]), 2),
             }
 
             if show_decay:
-                effective = ledger.get_effective_confidence(l.id)
-                entry["effective_confidence"] = round(effective, 2)
+                entry["effective_confidence"] = round(l.get("effective_confidence", l["confidence"]), 2)
 
             results.append(entry)
 
@@ -308,7 +308,8 @@ async def ledger_stats(project_dir: Optional[str] = None) -> dict:
             return {"error": "Ledger not found", "exists": False}
 
         ledger = Ledger(ledger_path)
-        all_learnings = ledger.get_all_learnings()
+        # Get all learnings with min_confidence=0 to include everything
+        all_learnings = ledger.get_learnings_by_confidence(min_confidence=0.0, limit=10000)
 
         by_category = {}
         by_confidence = {"high": 0, "medium": 0, "low": 0}
@@ -316,10 +317,11 @@ async def ledger_stats(project_dir: Optional[str] = None) -> dict:
 
         for l in all_learnings:
             total += 1
-            cat = l.category.value if hasattr(l.category, 'value') else str(l.category)
+            # l is a dict with keys: id, category, content, confidence, effective_confidence
+            cat = l["category"]
             by_category[cat] = by_category.get(cat, 0) + 1
 
-            conf = l.confidence
+            conf = l.get("effective_confidence", l["confidence"])
             if conf >= 0.7:
                 by_confidence["high"] += 1
             elif conf >= 0.4:

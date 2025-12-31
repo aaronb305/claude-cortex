@@ -107,7 +107,7 @@ export function Search({ onSelect, onClose, projectPath }: SearchProps) {
         return;
       }
 
-      if (key.return && results.length > 0) {
+      if (key.return && results.length > 0 && results[selectedIndex]) {
         onSelect(results[selectedIndex]);
         return;
       }
