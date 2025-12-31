@@ -15,6 +15,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -217,11 +218,21 @@ def file_lock(path: Path, exclusive: bool = True):
     lock_file = open(lock_path, "w")
     try:
         lock_type = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        start = time.time()
         fcntl.flock(lock_file.fileno(), lock_type)
+        elapsed = time.time() - start
+        if elapsed > 1.0:
+            print(f"[continuous-claude] Lock on {path} took {elapsed:.2f}s", file=sys.stderr)
         yield lock_file
     finally:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-        lock_file.close()
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass  # Ignore unlock errors
+        try:
+            lock_file.close()
+        except Exception:
+            pass  # Ignore close errors
 
 
 # -----------------------------------------------------------------------------
@@ -375,7 +386,8 @@ def is_valid_learning(content: str) -> bool:
     """Check if content looks like a valid learning vs noise.
 
     Applies heuristics to filter out markdown artifacts, code snippets,
-    and other non-learning content.
+    and other non-learning content, while allowing technical content
+    with backticks, parentheses, and common code references.
 
     Args:
         content: The extracted content to validate.
@@ -390,17 +402,22 @@ def is_valid_learning(content: str) -> bool:
     if content.count("|") > 2:
         return False
 
-    # Reject if it's mostly special characters
-    alnum_ratio = sum(c.isalnum() or c.isspace() for c in content) / max(len(content), 1)
-    if alnum_ratio < 0.6:
+    # Count alphanumeric + common punctuation as valid characters
+    # This is more lenient to allow backticks, parentheses, brackets for code refs
+    valid_chars = sum(
+        c.isalnum() or c.isspace() or c in ".,;:!?'-()[]{}\"`_"
+        for c in content
+    )
+    if valid_chars / max(len(content), 1) < 0.5:
         return False
 
     # Reject if it starts with markdown formatting artifacts
     if content.startswith(("-", "*", "|", "#", "```")):
         return False
 
-    # Reject if it looks like a code snippet
-    if content.count("(") > 3 or content.count("{") > 2:
+    # Be more lenient with parentheses/braces - only reject if clearly code block
+    # (e.g., more than 5 open parens or 4 open braces suggests raw code)
+    if content.count("(") > 5 or content.count("{") > 4:
         return False
 
     # Must have some actual words
@@ -620,17 +637,18 @@ def append_block(
         })
         write_json(index_file, index)
 
-        # Update reinforcements
-        reinforcements = read_json(reinforcements_file)
-        for learning in learnings:
-            reinforcements["learnings"][learning["id"]] = {
-                "category": learning["category"],
-                "content": learning["content"],  # Cache content for O(1) lookup
-                "confidence": learning["confidence"],
-                "outcome_count": 0,
-                "last_updated": timestamp,
-            }
-        write_json(reinforcements_file, reinforcements)
+        # Update reinforcements with its own lock to prevent race conditions
+        with file_lock(reinforcements_file, exclusive=True):
+            reinforcements = read_json(reinforcements_file)
+            for learning in learnings:
+                reinforcements["learnings"][learning["id"]] = {
+                    "category": learning["category"],
+                    "content": learning["content"],  # Cache content for O(1) lookup
+                    "confidence": learning["confidence"],
+                    "outcome_count": 0,
+                    "last_updated": timestamp,
+                }
+            write_json(reinforcements_file, reinforcements)
 
     # Index learnings for search (outside the lock to minimize lock duration)
     index_learnings_to_search(ledger_path, learnings)

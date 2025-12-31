@@ -3,7 +3,7 @@
 import json
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
@@ -241,7 +241,7 @@ You are operating in autonomous continuous mode. Follow these critical instructi
         Returns:
             Summary of the run
         """
-        self.state["start_time"] = datetime.utcnow()
+        self.state["start_time"] = datetime.now(timezone.utc)
         self.stop_condition.reset()
 
         console.print(Panel(
@@ -304,7 +304,7 @@ You are operating in autonomous continuous mode. Follow these critical instructi
             self.state["iteration"] += 1
 
         # Final summary
-        duration = datetime.utcnow() - self.state["start_time"]
+        duration = datetime.now(timezone.utc) - self.state["start_time"]
         console.print(Panel(
             f"Iterations: {self.state['iteration']}\n"
             f"Total learnings: {self.state['total_learnings']}\n"

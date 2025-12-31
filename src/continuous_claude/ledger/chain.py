@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
     from ..search import SearchIndex
     from ..search.index import SearchResult
     from .crypto import KeyManager, VerifyResult
+
+logger = logging.getLogger("continuous_claude.ledger")
 
 
 @contextmanager
@@ -323,16 +326,19 @@ class Ledger:
                         source=learning.source,
                         commit=False,  # Batch operation
                     )
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"Failed to index learning {learning.id}: {e}")
                     failed_ids.append(learning.id)
             # Single commit at the end
             index.connection.commit()
-        except Exception:
+        except Exception as e:
+            logger.error(f"Search index operation failed: {e}")
             # Complete failure - all learnings failed
             failed_ids = [l.id for l in learnings]
 
         # Track any failures for later retry
         if failed_ids:
+            logger.info(f"Tracking {len(failed_ids)} failed indexing operations")
             self._track_failed_indexing(failed_ids)
 
     def _track_failed_indexing(self, learning_ids: list[str]) -> None:
@@ -477,11 +483,16 @@ class Ledger:
         block_id = None
 
         if prefix_match:
-            for lid, data in learnings_data.items():
-                if lid.startswith(learning_id):
-                    matched_id = lid
-                    block_id = data.get("block_id")
-                    break
+            matches = [(lid, data) for lid, data in learnings_data.items()
+                       if lid.startswith(learning_id)]
+            if len(matches) == 0:
+                return None, None
+            if len(matches) > 1:
+                # Ambiguous prefix - return None to indicate multiple matches
+                # Caller should provide a longer prefix or full ID
+                return None, None
+            matched_id, data = matches[0]
+            block_id = data.get("block_id")
         else:
             if learning_id in learnings_data:
                 matched_id = learning_id
@@ -857,8 +868,9 @@ class Ledger:
         # Calculate days since last applied
         days_since_applied = (datetime.now(timezone.utc) - last_applied).days
 
-        # Calculate decay factor with 180-day half-life and 0.5 minimum
-        decay_factor = max(0.5, 1.0 - (days_since_applied / 180.0))
+        # Exponential decay with 180-day half-life and 0.5 minimum floor
+        # At 180 days: 50%, at 360 days: 25%, etc.
+        decay_factor = max(0.5, 0.5 ** (days_since_applied / 180.0))
 
         return base_confidence * decay_factor
 

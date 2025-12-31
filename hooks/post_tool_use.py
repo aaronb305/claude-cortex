@@ -19,6 +19,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent))
 
 from shared import (
+    file_lock,
     get_session_learnings_path,
     load_session_learnings,
     save_session_learnings,
@@ -92,10 +93,12 @@ def validate_learning_ids(
     for reinforcements_path in [project_reinforcements, global_reinforcements]:
         if reinforcements_path.exists():
             try:
-                with open(reinforcements_path) as f:
-                    data = json.load(f)
-                    for lid in data.get("learnings", {}).keys():
-                        all_learning_ids.add(lid[:8].lower())
+                # Use shared lock to prevent reading while another process writes
+                with file_lock(reinforcements_path, exclusive=False):
+                    with open(reinforcements_path) as f:
+                        data = json.load(f)
+                        for lid in data.get("learnings", {}).keys():
+                            all_learning_ids.add(lid[:8].lower())
             except (json.JSONDecodeError, IOError):
                 pass
 

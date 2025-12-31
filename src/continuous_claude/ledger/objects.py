@@ -1,31 +1,15 @@
 """Content-addressed object store for learnings."""
 
-import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
+from uuid import uuid4
+
+from .models import compute_content_hash
 
 if TYPE_CHECKING:
     from .models import Learning
-
-
-def compute_content_hash(content: str) -> str:
-    """Compute a normalized content hash for deduplication.
-
-    Normalizes the content by:
-    - Converting to lowercase
-    - Collapsing all whitespace (spaces, tabs, newlines) to single spaces
-    - Stripping leading/trailing whitespace
-
-    Args:
-        content: The content string to hash
-
-    Returns:
-        First 16 characters of the SHA-256 hash
-    """
-    normalized = " ".join(content.lower().split())
-    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
 
 class ObjectStore:
@@ -96,7 +80,8 @@ class ObjectStore:
         }
 
         # Write atomically by writing to temp file then renaming
-        temp_path = object_path.with_suffix(".tmp")
+        # Use UUID in temp file name to prevent race conditions with concurrent writes
+        temp_path = object_path.with_suffix(f".{uuid4().hex[:8]}.tmp")
         try:
             with open(temp_path, "w") as f:
                 json.dump(object_data, f, indent=2)
@@ -146,7 +131,8 @@ class ObjectStore:
         }
 
         # Write atomically by writing to temp file then renaming
-        temp_path = object_path.with_suffix(".tmp")
+        # Use UUID in temp file name to prevent race conditions with concurrent writes
+        temp_path = object_path.with_suffix(f".{uuid4().hex[:8]}.tmp")
         try:
             with open(temp_path, "w") as f:
                 json.dump(object_data, f, indent=2)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 import tarfile
 import tempfile
 from dataclasses import dataclass, field
@@ -193,25 +194,25 @@ class LedgerSync:
         )
 
     def _verify_block(self, block_data: dict) -> bool:
-        """Verify a block's hash is correct.
+        """Verify block hash matches content.
 
         Args:
-            block_data: Raw block data dictionary
+            block_data: Raw block data dictionary from JSON file
 
         Returns:
             True if hash verification passes, False otherwise
         """
+        stored_hash = block_data.get("hash")
+        if not stored_hash:
+            return False
+
         try:
-            # Parse the block to compute its hash
-            block = Block.model_validate(block_data)
-            stored_hash = block_data.get("hash")
-
-            # The Block model computes hash as a property
-            # Compare stored hash with computed hash
-            if stored_hash and block.hash != stored_hash:
-                return False
-
-            return True
+            # Remove hash from data before recomputing
+            # Block.model_validate ignores the stored hash (computed_field)
+            # and computes fresh from content
+            data_without_hash = {k: v for k, v in block_data.items() if k != "hash"}
+            block = Block.model_validate(data_without_hash)
+            return block.hash == stored_hash
         except Exception:
             return False
 
@@ -623,7 +624,10 @@ def import_ledger(archive_path: Path, ledger_path: Path) -> SyncResult:
 
         # Extract archive (filter="data" for security - Python 3.12+)
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(temp_path, filter="data")
+            if sys.version_info >= (3, 12):
+                tar.extractall(temp_path, filter="data")
+            else:
+                tar.extractall(temp_path)
 
         # Ensure target ledger exists
         ledger_path.mkdir(parents=True, exist_ok=True)

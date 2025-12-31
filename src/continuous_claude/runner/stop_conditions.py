@@ -1,7 +1,7 @@
 """Pluggable stopping conditions for the execution loop."""
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from ..ledger import Ledger
@@ -70,9 +70,9 @@ class TimeLimit(StopCondition):
 
     def should_stop(self, iteration: int, state: dict) -> tuple[bool, str]:
         if self.start_time is None:
-            self.start_time = datetime.utcnow()
+            self.start_time = datetime.now(timezone.utc)
 
-        elapsed = datetime.utcnow() - self.start_time
+        elapsed = datetime.now(timezone.utc) - self.start_time
         if elapsed >= self.duration:
             return True, f"Time limit reached ({elapsed} >= {self.duration})"
         return False, ""

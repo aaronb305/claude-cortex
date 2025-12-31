@@ -84,6 +84,23 @@ def run(
     stale_threshold: int,
 ):
     """Run continuous Claude with the given prompt."""
+    # Validate numeric parameters
+    if max_iterations <= 0:
+        console.print("[red]Error: --max-iterations must be positive[/red]")
+        raise SystemExit(1)
+
+    if max_cost is not None and max_cost <= 0:
+        console.print("[red]Error: --max-cost must be positive[/red]")
+        raise SystemExit(1)
+
+    if max_time is not None and max_time <= 0:
+        console.print("[red]Error: --max-time must be positive[/red]")
+        raise SystemExit(1)
+
+    if stale_threshold <= 0:
+        console.print("[red]Error: --stale-threshold must be positive[/red]")
+        raise SystemExit(1)
+
     project = project.resolve()
 
     console.print(f"[bold]Project:[/bold] {project}")
@@ -157,6 +174,15 @@ def list_learnings(
     show_decay: bool,
 ):
     """List learnings from the ledger."""
+    # Validate numeric parameters
+    if min_confidence < 0 or min_confidence > 1:
+        console.print("[red]Error: --min-confidence must be between 0 and 1[/red]")
+        raise SystemExit(1)
+
+    if limit <= 0:
+        console.print("[red]Error: --limit must be positive[/red]")
+        raise SystemExit(1)
+
     if project:
         ledger = get_project_ledger(project.resolve())
         console.print(f"[bold]Project ledger:[/bold] {project}")
@@ -390,7 +416,10 @@ def outcome(
         console.print(f"[green]Recorded {result} outcome for learning {matched_id[:8]}[/green]")
         console.print(f"New confidence: {new_confidence*100:.0f}%")
     else:
-        console.print(f"[red]Learning {learning_id} not found[/red]")
+        ledger_type = "project" if project else "global"
+        console.print(f"[red]Learning '{learning_id}' not found in {ledger_type} ledger[/red]")
+        console.print(f"[dim]Use 'cclaude list' to see available learnings[/dim]")
+        raise SystemExit(1)
 
 
 @main.command()
@@ -408,6 +437,11 @@ def outcome(
 )
 def promote(project: Path, threshold: float):
     """Promote high-confidence project learnings to global ledger."""
+    # Validate numeric parameters
+    if threshold < 0 or threshold > 1:
+        console.print("[red]Error: --threshold must be between 0 and 1[/red]")
+        raise SystemExit(1)
+
     project_ledger = get_project_ledger(project.resolve())
     global_ledger = get_global_ledger()
 
@@ -471,7 +505,10 @@ def show(learning_id: str, project: Optional[Path], show_decay: bool):
             for o in outcomes:
                 console.print(f"  - {o['result']}: {o['context']} (delta: {o['delta']:+.2f})")
     else:
-        console.print(f"[red]Learning {learning_id} not found[/red]")
+        ledger_type = "project" if project else "global"
+        console.print(f"[red]Learning '{learning_id}' not found in {ledger_type} ledger[/red]")
+        console.print(f"[dim]Use 'cclaude list' to see available learnings[/dim]")
+        raise SystemExit(1)
 
 
 @main.command()
@@ -508,6 +545,11 @@ def search(
     - Boolean operators: auth AND token
     - Prefix matching: auth*
     """
+    # Validate numeric parameters
+    if limit <= 0:
+        console.print("[red]Error: --limit must be positive[/red]")
+        raise SystemExit(1)
+
     # Get the appropriate search index
     if project:
         cache_dir = project.resolve() / ".claude" / "cache"
@@ -832,6 +874,11 @@ def handoff_show(project: Path, session: Optional[str]):
 )
 def handoff_list(project: Path, session: Optional[str], limit: int):
     """List available handoffs."""
+    # Validate numeric parameters
+    if limit <= 0:
+        console.print("[red]Error: --limit must be positive[/red]")
+        raise SystemExit(1)
+
     project = project.resolve()
     manager = HandoffManager(project)
 
@@ -948,6 +995,11 @@ def summary_show(session_id: Optional[str], project: Path):
 )
 def summary_list(project: Path, session: Optional[str], limit: int):
     """List available summaries."""
+    # Validate numeric parameters
+    if limit <= 0:
+        console.print("[red]Error: --limit must be positive[/red]")
+        raise SystemExit(1)
+
     project = project.resolve()
     manager = SummaryManager(project)
 
@@ -1015,6 +1067,15 @@ def suggest(
     global knowledge base. Use --apply to import a suggestion to the
     project ledger.
     """
+    # Validate numeric parameters
+    if limit <= 0:
+        console.print("[red]Error: --limit must be positive[/red]")
+        raise SystemExit(1)
+
+    if min_confidence < 0 or min_confidence > 1:
+        console.print("[red]Error: --min-confidence must be between 0 and 1[/red]")
+        raise SystemExit(1)
+
     project = project.resolve()
     global_ledger = get_global_ledger()
 
@@ -1256,6 +1317,11 @@ def outcomes_pending(project: Path, show_all: bool, limit: int):
     Shows learnings that were referenced in recent sessions but haven't
     received enough outcome feedback to build reliable confidence scores.
     """
+    # Validate numeric parameters
+    if limit <= 0:
+        console.print("[red]Error: --limit must be positive[/red]")
+        raise SystemExit(1)
+
     project = project.resolve()
 
     learnings = get_learnings_needing_outcomes(project)
@@ -1322,6 +1388,11 @@ def outcomes_batch(project: Path, limit: int):
 
     Walks through learnings that need outcomes and prompts for feedback.
     """
+    # Validate numeric parameters
+    if limit <= 0:
+        console.print("[red]Error: --limit must be positive[/red]")
+        raise SystemExit(1)
+
     from .ledger.models import OutcomeResult
 
     project = project.resolve()
@@ -1573,6 +1644,11 @@ def analyze_session_cmd(
 )
 def analyze_metrics(project: Path, limit: int):
     """Show aggregated metrics across recent sessions."""
+    # Validate numeric parameters
+    if limit <= 0:
+        console.print("[red]Error: --limit must be positive[/red]")
+        raise SystemExit(1)
+
     project = project.resolve()
     insights_dir = project / ".claude" / "insights"
 
@@ -1706,7 +1782,7 @@ def sync_status(project: Optional[Path]):
 
     if not ledger_path.exists():
         console.print(f"[red]Ledger not found at {ledger_path}[/red]")
-        return
+        raise SystemExit(1)
 
     if project:
         ledger = get_project_ledger(project.resolve())
@@ -1791,9 +1867,21 @@ def sync_pull(remote: Path, project: Optional[Path], dry_run: bool, no_verify: b
 
     if not local_path.exists():
         console.print(f"[red]Local ledger not found at {local_path}[/red]")
-        return
+        raise SystemExit(1)
 
     remote = Path(remote).resolve()
+
+    # Verify remote ledger exists
+    if not remote.exists():
+        console.print(f"[red]Remote ledger not found: {remote}[/red]")
+        raise SystemExit(1)
+
+    # Verify remote has expected structure
+    remote_blocks = remote / "blocks"
+    if not remote_blocks.exists():
+        console.print(f"[red]Remote path does not appear to be a valid ledger: {remote}[/red]")
+        console.print("[dim]Expected to find 'blocks' directory[/dim]")
+        raise SystemExit(1)
 
     console.print(f"[bold]Pull from:[/bold] {remote}")
     console.print(f"[bold]Pull to:[/bold] {local_path}")
@@ -1897,9 +1985,19 @@ def sync_push(remote: Path, project: Optional[Path], dry_run: bool, no_verify: b
 
     if not local_path.exists():
         console.print(f"[red]Local ledger not found at {local_path}[/red]")
-        return
+        raise SystemExit(1)
 
     remote = Path(remote).resolve()
+
+    # Verify remote ledger exists
+    if not remote.exists():
+        console.print(f"[red]Remote ledger not found: {remote}[/red]")
+        raise SystemExit(1)
+
+    # Verify remote has expected structure (or at least is a directory)
+    if not remote.is_dir():
+        console.print(f"[red]Remote path is not a directory: {remote}[/red]")
+        raise SystemExit(1)
 
     console.print(f"[bold]Push from:[/bold] {local_path}")
     console.print(f"[bold]Push to:[/bold] {remote}")
@@ -1994,7 +2092,7 @@ def sync_export(output: Path, project: Optional[Path]):
 
     if not ledger_path.exists():
         console.print(f"[red]Ledger not found at {ledger_path}[/red]")
-        return
+        raise SystemExit(1)
 
     output = Path(output).resolve()
 

@@ -236,7 +236,7 @@ class TestShowCommand:
 
         result = cli_runner.invoke(main, ["show", "nonexistent-id"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "not found" in result.output
 
     def test_show_with_decay_flag(self, cli_runner, ledger_with_learnings, monkeypatch):
@@ -392,7 +392,7 @@ class TestOutcomeCommand:
             ["outcome", "nonexistent", "-r", "success", "-c", "Test"]
         )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "not found" in result.output
 
     def test_outcome_updates_confidence(self, cli_runner, ledger_with_learnings, monkeypatch):
