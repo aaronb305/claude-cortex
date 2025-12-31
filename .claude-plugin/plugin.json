@@ -1,0 +1,13 @@
+{
+  "name": "claude-cortex",
+  "version": "0.1.0",
+  "description": "Blockchain-style ledger memory with performance-based reinforcement for Claude Code",
+  "author": {
+    "name": "Aaron"
+  },
+  "license": "MIT",
+  "keywords": ["ledger", "memory", "learning", "reinforcement", "blockchain"],
+  "agents": "./agents/*.md",
+  "skills": "./skills/*/SKILL.md",
+  "mcpServers": "./.mcp.json"
+}
