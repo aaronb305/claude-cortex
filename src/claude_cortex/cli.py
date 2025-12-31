@@ -3145,5 +3145,259 @@ def ingest_reset(project: Path, source: str, confirm: bool):
     console.print(f"[green]Reset {source} ingestion state[/green]")
 
 
+# =============================================================================
+# Entity Graph Commands
+# =============================================================================
+
+
+@main.group()
+def entities():
+    """Manage code entity graph for structure tracking."""
+    pass
+
+
+@entities.command("index")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory",
+)
+@click.option(
+    "--force", "-f",
+    is_flag=True,
+    help="Force re-index all files",
+)
+@click.option(
+    "--pattern",
+    multiple=True,
+    help="Glob patterns to match (default: *.py, *.ts, *.tsx)",
+)
+def entities_index(project: Path, force: bool, pattern: tuple[str, ...]):
+    """Index code entities in a project."""
+    from claude_cortex.entities import EntityGraph
+
+    project = project.resolve()
+    patterns = list(pattern) if pattern else None
+
+    console.print(f"[cyan]Indexing entities in:[/cyan] {project}")
+
+    with EntityGraph(project_dir=project) as graph:
+        files, entities_count = graph.index_directory(
+            project,
+            patterns=patterns,
+            force=force,
+        )
+
+        stats = graph.get_stats()
+
+    console.print(f"\n[green]Indexed {entities_count} entities from {files} files[/green]")
+
+    table = Table(title="Entity Breakdown")
+    table.add_column("Type", style="cyan")
+    table.add_column("Count", justify="right")
+
+    table.add_row("Files", str(stats["files"]))
+    table.add_row("Functions", str(stats["functions"]))
+    table.add_row("Classes", str(stats["classes"]))
+    table.add_row("Methods", str(stats["methods"]))
+    table.add_row("Relationships", str(stats["relationships"]))
+
+    console.print(table)
+
+
+@entities.command("show")
+@click.argument("qualified_name")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory",
+)
+@click.option(
+    "--deps/--no-deps",
+    default=False,
+    help="Show dependencies",
+)
+@click.option(
+    "--dependents/--no-dependents",
+    default=False,
+    help="Show what depends on this entity",
+)
+@click.option(
+    "--depth",
+    type=int,
+    default=1,
+    help="Depth of dependency traversal",
+)
+def entities_show(
+    qualified_name: str,
+    project: Path,
+    deps: bool,
+    dependents: bool,
+    depth: int,
+):
+    """Show details of a specific entity."""
+    from claude_cortex.entities import EntityGraph
+
+    with EntityGraph(project_dir=project) as graph:
+        entity = graph.get_entity(qualified_name)
+
+        if not entity:
+            # Try searching
+            results = graph.search(qualified_name, limit=5)
+            if results:
+                console.print(f"[yellow]Entity not found. Did you mean:[/yellow]")
+                for r in results:
+                    console.print(f"  • {r.qualified_name}")
+            else:
+                console.print(f"[red]Entity not found: {qualified_name}[/red]")
+            return
+
+        # Display entity details
+        panel_content = f"""[cyan]Type:[/cyan] {entity.entity_type.value}
+[cyan]Name:[/cyan] {entity.name}
+[cyan]File:[/cyan] {entity.file_path}
+[cyan]Lines:[/cyan] {entity.start_line}-{entity.end_line or entity.start_line}"""
+
+        if entity.metadata:
+            for key, value in entity.metadata.items():
+                panel_content += f"\n[cyan]{key}:[/cyan] {value}"
+
+        console.print(Panel(panel_content, title=qualified_name))
+
+        # Show dependencies if requested
+        if deps and entity.id:
+            dep_rels = graph.get_dependencies(entity.id, depth=depth)
+            if dep_rels:
+                console.print("\n[bold]Dependencies:[/bold]")
+                for rel in dep_rels:
+                    if rel.target_entity:
+                        console.print(
+                            f"  → {rel.relationship_type.value}: "
+                            f"{rel.target_entity.qualified_name}"
+                        )
+
+        # Show dependents if requested
+        if dependents and entity.id:
+            dep_rels = graph.get_dependents(entity.id, depth=depth)
+            if dep_rels:
+                console.print("\n[bold]Dependents (what uses this):[/bold]")
+                for rel in dep_rels:
+                    if rel.source_entity:
+                        console.print(
+                            f"  ← {rel.relationship_type.value}: "
+                            f"{rel.source_entity.qualified_name}"
+                        )
+
+
+@entities.command("search")
+@click.argument("query")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory",
+)
+@click.option(
+    "-n", "--limit",
+    type=int,
+    default=20,
+    help="Maximum results",
+)
+@click.option(
+    "--type", "-t",
+    type=click.Choice(["file", "function", "class", "method", "constant"]),
+    help="Filter by entity type",
+)
+def entities_search(query: str, project: Path, limit: int, type: Optional[str]):
+    """Search for entities by name."""
+    from claude_cortex.entities import EntityGraph, EntityType
+
+    with EntityGraph(project_dir=project) as graph:
+        results = graph.search(query, limit=limit * 2)  # Over-fetch for filtering
+
+        if type:
+            filter_type = EntityType(type)
+            results = [r for r in results if r.entity_type == filter_type]
+
+        results = results[:limit]
+
+        if not results:
+            console.print(f"[yellow]No entities found matching: {query}[/yellow]")
+            return
+
+        table = Table(title=f"Search Results: {query}")
+        table.add_column("Type", style="cyan", width=10)
+        table.add_column("Name", style="green")
+        table.add_column("File", style="dim")
+        table.add_column("Line", justify="right")
+
+        for entity in results:
+            table.add_row(
+                entity.entity_type.value,
+                entity.name,
+                Path(entity.file_path).name,
+                str(entity.start_line or ""),
+            )
+
+        console.print(table)
+
+
+@entities.command("stats")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory",
+)
+def entities_stats(project: Path):
+    """Show entity graph statistics."""
+    from claude_cortex.entities import EntityGraph
+
+    with EntityGraph(project_dir=project) as graph:
+        stats = graph.get_stats()
+
+    table = Table(title="Entity Graph Statistics")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", justify="right")
+
+    table.add_row("Total Entities", str(stats["entities"]))
+    table.add_row("Files", str(stats["files"]))
+    table.add_row("Functions", str(stats["functions"]))
+    table.add_row("Classes", str(stats["classes"]))
+    table.add_row("Methods", str(stats["methods"]))
+    table.add_row("Relationships", str(stats["relationships"]))
+
+    console.print(table)
+
+
+@entities.command("clear")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory",
+)
+@click.option(
+    "--confirm", "-y",
+    is_flag=True,
+    help="Skip confirmation",
+)
+def entities_clear(project: Path, confirm: bool):
+    """Clear all entities from the graph."""
+    from claude_cortex.entities import EntityGraph
+
+    if not confirm:
+        if not click.confirm("Clear all entities from the graph?"):
+            console.print("[dim]Cancelled[/dim]")
+            return
+
+    with EntityGraph(project_dir=project) as graph:
+        graph.clear()
+
+    console.print("[green]Entity graph cleared[/green]")
+
+
 if __name__ == "__main__":
     main()

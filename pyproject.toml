@@ -14,6 +14,8 @@ dependencies = [
     "cryptography>=46.0.3",
     # MCP server for Claude Code integration
     "mcp>=1.0.0",
+    # Tree-sitter for code entity extraction (bundled grammars, ~15MB)
+    "tree-sitter-language-pack>=0.4.0",
 ]
 
 [project.scripts]
