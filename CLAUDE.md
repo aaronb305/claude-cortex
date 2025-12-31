@@ -36,6 +36,7 @@ All core functionality works out of the box:
 | Confidence decay | Time-based confidence adjustment | (included) |
 | Cross-project transfer | Learning suggestions & import | (included) |
 | File locking | Race condition prevention | fcntl (Python stdlib) |
+| Git/PR ingestion | Extract learnings from commits & PRs | gh CLI (for PRs) |
 
 ### Optional Features
 
@@ -172,7 +173,101 @@ uv run cclaude suggest --apply <id>       # Import a suggestion to project ledge
 
 # Content cache migration (performance optimization)
 uv run cclaude migrate                    # Populate content cache in reinforcements.json
+
+# Git/PR ingestion (extract learnings from commit history)
+uv run cclaude ingest git                 # Ingest from git commits
+uv run cclaude ingest git --since 30d     # Last 30 days
+uv run cclaude ingest git --tags-only     # Only explicit [DISCOVERY] etc. tags
+uv run cclaude ingest git --dry-run       # Preview without saving
+uv run cclaude ingest pr                  # Ingest from GitHub PRs
+uv run cclaude ingest pr --since 2w       # PRs from last 2 weeks
+uv run cclaude ingest status              # Show ingestion state
+uv run cclaude ingest reset               # Reset ingestion state
 ```
+
+## Git/PR Ingestion
+
+Extract learnings from your git commit history and GitHub pull requests.
+
+### Git Commit Ingestion
+
+Automatically extracts learnings from conventional commits and explicit learning tags:
+
+```bash
+# Ingest commits from the last 30 days
+uv run cclaude ingest git --since 30d
+
+# Only extract from explicit [DISCOVERY] [DECISION] [ERROR] [PATTERN] tags
+uv run cclaude ingest git --tags-only
+
+# Filter by author
+uv run cclaude ingest git --author "john@example.com"
+
+# Preview what would be extracted (dry run)
+uv run cclaude ingest git --dry-run --limit 50
+```
+
+**Learning Sources from Commits:**
+
+| Source | Category | Confidence |
+|--------|----------|------------|
+| `[DISCOVERY]` tag | DISCOVERY | 0.65+ |
+| `[DECISION]` tag | DECISION | 0.65+ |
+| `[ERROR]` tag | ERROR | 0.65+ |
+| `[PATTERN]` tag | PATTERN | 0.65+ |
+| `feat:` commits | DISCOVERY | 0.55+ |
+| `fix:` commits | ERROR | 0.55+ |
+| `refactor:` commits | PATTERN | 0.55+ |
+| `docs:` commits | DECISION | 0.55+ |
+
+**Confidence Boosts:**
+- +0.05 for detailed messages (>100 chars)
+- +0.10 for very detailed messages (>200 chars)
+- +0.05 for co-authored commits (implies review)
+
+### GitHub PR Ingestion
+
+Extract learnings from PR descriptions, reviews, and comments:
+
+```bash
+# Ingest merged PRs
+uv run cclaude ingest pr
+
+# Ingest PRs from specific timeframe
+uv run cclaude ingest pr --since 2w
+
+# Specific PR
+uv run cclaude ingest pr --pr 123
+
+# Include all states (not just merged)
+uv run cclaude ingest pr --state all
+```
+
+**Requires:** GitHub CLI (`gh`) authenticated via `gh auth login`
+
+**What's Extracted:**
+- PR descriptions with explicit learning tags
+- "Breaking Changes" sections → ERROR category
+- "Why/Motivation" sections → DECISION category
+- CHANGES_REQUESTED reviews → ERROR category
+- Inline code comments with learning tags
+
+### Incremental Ingestion
+
+The system tracks ingestion progress per-project:
+
+```bash
+# Check current state
+uv run cclaude ingest status
+
+# Resume from where you left off (automatic)
+uv run cclaude ingest git
+
+# Reset and start fresh
+uv run cclaude ingest reset --source git
+```
+
+State is stored in `.claude/ingestion_state.json`.
 
 ## Continuous Execution Mode
 
@@ -436,6 +531,12 @@ project/.claude/
 │   │   ├── merkle.py          # Merkle tree for efficient sync
 │   │   ├── objects.py         # Content-addressed storage
 │   │   └── crypto.py          # Ed25519 signing and verification
+│   ├── ingest/                # Git/PR ingestion
+│   │   ├── git_extractor.py   # Git commit parsing + learning extraction
+│   │   ├── github_client.py   # GitHub API via gh CLI
+│   │   ├── pr_extractor.py    # PR/review learning extraction
+│   │   ├── patterns.py        # Extraction regex patterns
+│   │   └── state.py           # Incremental ingestion state
 │   ├── runner/                # Continuous execution
 │   ├── handoff/               # WIP state capture
 │   ├── summaries/             # Transcript summary storage

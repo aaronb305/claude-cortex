@@ -2598,5 +2598,552 @@ def keys_revoke(key_id: str, project: Optional[Path]):
         console.print(f"[red]Failed to revoke key[/red]")
 
 
+# ============================================================================
+# Ingest Commands (Git/PR learning extraction)
+# ============================================================================
+
+@main.group()
+def ingest():
+    """Ingest learnings from git history and pull requests."""
+    pass
+
+
+def _parse_date(date_str: str) -> datetime:
+    """Parse a date string (ISO format or relative like '30d', '2w')."""
+    import re
+
+    # Check for relative format
+    match = re.match(r'^(\d+)([dwmh])$', date_str.lower())
+    if match:
+        value = int(match.group(1))
+        unit = match.group(2)
+        now = datetime.now()
+
+        if unit == 'h':
+            return now - timedelta(hours=value)
+        elif unit == 'd':
+            return now - timedelta(days=value)
+        elif unit == 'w':
+            return now - timedelta(weeks=value)
+        elif unit == 'm':
+            return now - timedelta(days=value * 30)
+
+    # Try ISO format
+    try:
+        return datetime.fromisoformat(date_str)
+    except ValueError:
+        raise click.BadParameter(f"Invalid date format: {date_str}")
+
+
+@ingest.command("git")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory (default: current directory)",
+)
+@click.option(
+    "--since",
+    type=str,
+    default=None,
+    help="Start date (ISO format or relative: 30d, 2w)",
+)
+@click.option(
+    "--author",
+    type=str,
+    default=None,
+    help="Filter by author email/name",
+)
+@click.option(
+    "--branch",
+    type=str,
+    default="HEAD",
+    help="Branch to analyze (default: current branch)",
+)
+@click.option(
+    "--tags-only",
+    is_flag=True,
+    default=False,
+    help="Only extract explicit [DISCOVERY] etc. tags",
+)
+@click.option(
+    "--include-merges",
+    is_flag=True,
+    default=False,
+    help="Include merge commits",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Show what would be extracted without saving",
+)
+@click.option(
+    "-n", "--limit",
+    type=int,
+    default=None,
+    help="Maximum commits to process",
+)
+@click.option(
+    "--json", "json_output",
+    is_flag=True,
+    default=False,
+    help="Output results as JSON",
+)
+def ingest_git(
+    project: Path,
+    since: Optional[str],
+    author: Optional[str],
+    branch: str,
+    tags_only: bool,
+    include_merges: bool,
+    dry_run: bool,
+    limit: Optional[int],
+    json_output: bool,
+):
+    """Extract learnings from git commit history.
+
+    Extracts learnings from:
+    - Explicit tags: [DISCOVERY], [DECISION], [ERROR], [PATTERN]
+    - Conventional commits: feat: → DISCOVERY, fix: → ERROR, refactor: → PATTERN
+    - Co-Authored-By trailers for attribution
+
+    Examples:
+
+        cclaude ingest git --since 30d
+
+        cclaude ingest git --since 2w --tags-only
+
+        cclaude ingest git --author "your@email.com"
+    """
+    import json as json_module
+    from claude_cortex.ingest import GitExtractor, IngestionStateManager
+
+    project = project.resolve()
+
+    try:
+        extractor = GitExtractor(project)
+    except ValueError as e:
+        if not json_output:
+            console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1)
+
+    # Parse dates
+    since_date = _parse_date(since) if since else None
+
+    # Load state for incremental ingestion
+    state_manager = IngestionStateManager(project)
+    state = state_manager.load()
+
+    # Use state's last commit if no --since provided
+    if not since and not since_date:
+        since_sha = state.git.last_commit_sha
+        if since_sha and not json_output:
+            console.print(f"[dim]Continuing from commit {since_sha[:7]}[/dim]")
+    else:
+        since_sha = None
+
+    if not json_output:
+        console.print(f"[bold]Ingesting git history for:[/bold] {project}")
+        console.print(f"  Branch: {branch}")
+        if since_date:
+            console.print(f"  Since: {since_date.strftime('%Y-%m-%d')}")
+        elif since_sha:
+            console.print(f"  Since commit: {since_sha[:7]}")
+
+    # Extract learnings
+    learnings, commits = extractor.ingest_commits(
+        since_sha=since_sha,
+        since_date=since_date,
+        branch=branch,
+        include_merges=include_merges,
+        limit=limit,
+        author=author,
+        tags_only=tags_only,
+    )
+
+    if not commits:
+        if json_output:
+            print(json_module.dumps({"commits": 0, "learnings": []}))
+        else:
+            console.print("[yellow]No commits found to process[/yellow]")
+        return
+
+    if json_output:
+        result = {
+            "commits": len(commits),
+            "learnings": [
+                {
+                    "id": l.id,
+                    "category": l.category.value,
+                    "content": l.content,
+                    "confidence": l.confidence,
+                    "source": l.source,
+                    "git_metadata": l.git_metadata.model_dump() if l.git_metadata else None,
+                }
+                for l in learnings
+            ],
+        }
+        print(json_module.dumps(result, indent=2, default=str))
+        return
+
+    console.print(f"\nProcessed {len(commits)} commits")
+    console.print(f"Extracted {len(learnings)} learnings:")
+
+    # Count by category
+    by_category: dict[str, int] = {}
+    for l in learnings:
+        cat = l.category.value
+        by_category[cat] = by_category.get(cat, 0) + 1
+
+    for cat, count in sorted(by_category.items()):
+        console.print(f"  - {cat}: {count}")
+
+    if dry_run:
+        console.print("\n[yellow]Dry run - no changes saved[/yellow]")
+        if learnings:
+            console.print("\n[bold]Sample learnings:[/bold]")
+            for l in learnings[:5]:
+                console.print(f"\n[{l.category.value}] ({l.confidence:.0%})")
+                console.print(f"  {l.content[:200]}...")
+                console.print(f"  [dim]Source: {l.source}[/dim]")
+        return
+
+    if not learnings:
+        console.print("[yellow]No learnings extracted[/yellow]")
+        return
+
+    # Save to ledger
+    ledger = get_project_ledger(project)
+    block = ledger.create_block(session_id=f"git-ingest-{datetime.now().isoformat()}")
+
+    added = 0
+    duplicates = 0
+    for learning in learnings:
+        # Check for duplicate by content hash
+        existing = ledger.find_learning_by_content_hash(learning.content_hash)
+        if existing:
+            duplicates += 1
+            # Boost confidence of existing learning
+            ledger.boost_confidence(existing[0], 0.05)
+        else:
+            block.learnings.append(learning)
+            added += 1
+
+    if block.learnings:
+        ledger.append_block(block)
+        console.print(f"\n[green]Added {added} new learnings to project ledger[/green]")
+    else:
+        console.print(f"\n[yellow]All {duplicates} learnings were duplicates (confidence boosted)[/yellow]")
+
+    if duplicates > 0:
+        console.print(f"[dim]{duplicates} duplicates had confidence boosted[/dim]")
+
+    # Update ingestion state
+    if commits:
+        last_commit = commits[0]  # Most recent
+        state_manager.update_git_state(
+            last_commit_sha=last_commit.sha,
+            last_commit_date=last_commit.date,
+            commits_processed=len(commits),
+            learnings_extracted=added,
+            branch=branch if branch != "HEAD" else extractor.get_current_branch(),
+        )
+        console.print(f"[dim]State saved to .claude/ingestion_state.json[/dim]")
+
+
+@ingest.command("pr")
+@click.argument("pr_number", type=int, required=False, default=None)
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory (default: current directory)",
+)
+@click.option(
+    "--repo",
+    type=str,
+    default=None,
+    help="GitHub repo (owner/name, default: from git remote)",
+)
+@click.option(
+    "--since",
+    type=str,
+    default=None,
+    help="Only PRs merged after this date",
+)
+@click.option(
+    "--state",
+    type=click.Choice(["open", "closed", "merged", "all"]),
+    default="merged",
+    help="PR state filter (default: merged)",
+)
+@click.option(
+    "--include-reviews/--no-reviews",
+    default=True,
+    help="Extract from review comments (default: yes)",
+)
+@click.option(
+    "--include-comments/--no-comments",
+    default=True,
+    help="Extract from discussion comments (default: yes)",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Show what would be extracted without saving",
+)
+@click.option(
+    "-n", "--limit",
+    type=int,
+    default=50,
+    help="Maximum PRs to process (default: 50)",
+)
+@click.option(
+    "--json", "json_output",
+    is_flag=True,
+    default=False,
+    help="Output results as JSON",
+)
+def ingest_pr(
+    pr_number: Optional[int],
+    project: Path,
+    repo: Optional[str],
+    since: Optional[str],
+    state: str,
+    include_reviews: bool,
+    include_comments: bool,
+    dry_run: bool,
+    limit: int,
+    json_output: bool,
+):
+    """Extract learnings from GitHub pull requests.
+
+    Extracts from PR descriptions, reviews, and comments that contain
+    explicit tags: [DISCOVERY], [DECISION], [ERROR], [PATTERN]
+
+    Also extracts from structured PR sections:
+    - "Why" / "Motivation" sections → DECISION
+    - "Breaking Changes" sections → ERROR
+
+    Examples:
+
+        cclaude ingest pr 123
+
+        cclaude ingest pr --since 7d
+
+        cclaude ingest pr --state all --limit 100
+    """
+    import json as json_module
+    from claude_cortex.ingest import GitHubClient, PRExtractor, IngestionStateManager
+
+    project = project.resolve()
+
+    try:
+        client = GitHubClient(repo=repo)
+    except RuntimeError as e:
+        if not json_output:
+            console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1)
+
+    since_date = _parse_date(since) if since else None
+
+    if not json_output:
+        console.print(f"[bold]Ingesting GitHub PRs for:[/bold] {client.repo}")
+        console.print(f"  State: {state}")
+        if pr_number:
+            console.print(f"  PR: #{pr_number}")
+        elif since_date:
+            console.print(f"  Since: {since_date.strftime('%Y-%m-%d')}")
+
+    extractor = PRExtractor(client)
+    learnings, prs = extractor.ingest_prs(
+        state=state,
+        limit=limit,
+        since=since_date,
+        pr_number=pr_number,
+        include_reviews=include_reviews,
+        include_comments=include_comments,
+    )
+
+    if not prs:
+        if json_output:
+            print(json_module.dumps({"prs": 0, "learnings": []}))
+        else:
+            console.print("[yellow]No PRs found to process[/yellow]")
+        return
+
+    if json_output:
+        result = {
+            "prs": len(prs),
+            "learnings": [
+                {
+                    "id": l.id,
+                    "category": l.category.value,
+                    "content": l.content,
+                    "confidence": l.confidence,
+                    "source": l.source,
+                    "git_metadata": l.git_metadata.model_dump() if l.git_metadata else None,
+                }
+                for l in learnings
+            ],
+        }
+        print(json_module.dumps(result, indent=2, default=str))
+        return
+
+    console.print(f"\nProcessed {len(prs)} PRs")
+    console.print(f"Extracted {len(learnings)} learnings:")
+
+    # Count by source
+    by_source: dict[str, int] = {}
+    for l in learnings:
+        src = l.learning_source.value
+        by_source[src] = by_source.get(src, 0) + 1
+
+    for src, count in sorted(by_source.items()):
+        console.print(f"  - {src}: {count}")
+
+    if dry_run:
+        console.print("\n[yellow]Dry run - no changes saved[/yellow]")
+        if learnings:
+            console.print("\n[bold]Sample learnings:[/bold]")
+            for l in learnings[:5]:
+                console.print(f"\n[{l.category.value}] ({l.confidence:.0%})")
+                console.print(f"  {l.content[:200]}...")
+                console.print(f"  [dim]Source: {l.source}[/dim]")
+        return
+
+    if not learnings:
+        console.print("[yellow]No learnings extracted[/yellow]")
+        return
+
+    # Save to ledger
+    ledger = get_project_ledger(project)
+    block = ledger.create_block(session_id=f"pr-ingest-{datetime.now().isoformat()}")
+
+    added = 0
+    duplicates = 0
+    for learning in learnings:
+        existing = ledger.find_learning_by_content_hash(learning.content_hash)
+        if existing:
+            duplicates += 1
+            ledger.boost_confidence(existing[0], 0.05)
+        else:
+            block.learnings.append(learning)
+            added += 1
+
+    if block.learnings:
+        ledger.append_block(block)
+        console.print(f"\n[green]Added {added} new learnings to project ledger[/green]")
+    else:
+        console.print(f"\n[yellow]All {duplicates} learnings were duplicates (confidence boosted)[/yellow]")
+
+    if duplicates > 0:
+        console.print(f"[dim]{duplicates} duplicates had confidence boosted[/dim]")
+
+    # Update state
+    if prs:
+        last_pr = prs[0]
+        state_manager = IngestionStateManager(project)
+        state_manager.update_github_state(
+            repository=client.repo,
+            last_pr_number=last_pr.number,
+            last_pr_merged_at=last_pr.merged_at,
+            prs_processed=len(prs),
+            learnings_extracted=added,
+        )
+        console.print(f"[dim]State saved to .claude/ingestion_state.json[/dim]")
+
+
+@ingest.command("status")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory (default: current directory)",
+)
+@click.option(
+    "--json", "json_output",
+    is_flag=True,
+    default=False,
+    help="Output as JSON",
+)
+def ingest_status(project: Path, json_output: bool):
+    """Show ingestion status for a project."""
+    import json as json_module
+    from claude_cortex.ingest import IngestionStateManager
+
+    project = project.resolve()
+    state_manager = IngestionStateManager(project)
+    state = state_manager.load()
+
+    if json_output:
+        print(json_module.dumps(state.to_dict(), indent=2))
+        return
+
+    console.print(f"[bold]Ingestion Status for:[/bold] {project}")
+
+    # Git status
+    console.print("\n[bold]Git:[/bold]")
+    if state.git.last_commit_sha:
+        console.print(f"  Last commit: {state.git.last_commit_sha[:7]}")
+        console.print(f"  Commit date: {state.git.last_commit_date}")
+        console.print(f"  Branch: {state.git.branch}")
+        console.print(f"  Commits processed: {state.git.commits_processed}")
+        console.print(f"  Learnings extracted: {state.git.learnings_extracted}")
+        console.print(f"  Last ingested: {state.git.last_ingested_at}")
+    else:
+        console.print("  [dim]No git history ingested yet[/dim]")
+
+    # GitHub status
+    console.print("\n[bold]GitHub:[/bold]")
+    if state.github.repository:
+        console.print(f"  Repository: {state.github.repository}")
+        console.print(f"  Last PR: #{state.github.last_pr_number}")
+        console.print(f"  Merged at: {state.github.last_pr_merged_at}")
+        console.print(f"  PRs processed: {state.github.prs_processed}")
+        console.print(f"  Learnings extracted: {state.github.learnings_extracted}")
+        console.print(f"  Last ingested: {state.github.last_ingested_at}")
+    else:
+        console.print("  [dim]No PRs ingested yet[/dim]")
+
+
+@ingest.command("reset")
+@click.option(
+    "-p", "--project",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory (default: current directory)",
+)
+@click.option(
+    "--source",
+    type=click.Choice(["git", "github", "all"]),
+    default="all",
+    help="Which source to reset (default: all)",
+)
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt",
+)
+def ingest_reset(project: Path, source: str, confirm: bool):
+    """Reset ingestion state (allows re-processing from scratch)."""
+    from claude_cortex.ingest import IngestionStateManager
+
+    project = project.resolve()
+
+    if not confirm:
+        if not click.confirm(f"Reset {source} ingestion state for {project}?"):
+            console.print("[dim]Cancelled[/dim]")
+            return
+
+    state_manager = IngestionStateManager(project)
+    state_manager.reset(source)
+
+    console.print(f"[green]Reset {source} ingestion state[/green]")
+
+
 if __name__ == "__main__":
     main()

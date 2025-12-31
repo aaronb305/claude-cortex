@@ -59,6 +59,39 @@ class OutcomeResult(str, Enum):
     PARTIAL = "partial"
 
 
+class LearningSource(str, Enum):
+    """Source of the learning extraction."""
+
+    SESSION = "session"              # Claude Code session transcript
+    GIT_COMMIT = "git_commit"        # Git commit message
+    GIT_DIFF = "git_diff"            # Git diff analysis
+    PR_DESCRIPTION = "pr_description"  # Pull request description
+    PR_REVIEW = "pr_review"          # Pull request review comment
+    PR_COMMENT = "pr_comment"        # Pull request discussion comment
+    MANUAL = "manual"                # Manually added via CLI
+    IMPORT = "import"                # Imported from another ledger
+
+
+class GitSourceMetadata(BaseModel):
+    """Metadata for git-sourced learnings."""
+
+    commit_sha: Optional[str] = Field(default=None, description="Full commit SHA")
+    commit_short_sha: Optional[str] = Field(default=None, description="First 7 chars of SHA")
+    commit_author_name: Optional[str] = Field(default=None, description="Commit author name")
+    commit_author_email: Optional[str] = Field(default=None, description="Commit author email")
+    commit_date: Optional[datetime] = Field(default=None, description="Commit timestamp")
+    commit_subject: Optional[str] = Field(default=None, description="First line of commit message")
+    branch: Optional[str] = Field(default=None, description="Branch name")
+    repository: Optional[str] = Field(default=None, description="Repository path or URL")
+
+    # PR-specific fields
+    pr_number: Optional[int] = Field(default=None, description="Pull request number")
+    pr_title: Optional[str] = Field(default=None, description="Pull request title")
+    pr_author: Optional[str] = Field(default=None, description="Pull request author")
+    pr_url: Optional[str] = Field(default=None, description="Pull request URL")
+    review_author: Optional[str] = Field(default=None, description="Review comment author")
+
+
 class Outcome(BaseModel):
     """Records the result of applying a piece of knowledge."""
 
@@ -137,6 +170,20 @@ class Learning(BaseModel):
     derived_from: Optional[str] = Field(
         default=None,
         description="ID of the learning this was derived/imported from"
+    )
+
+    # Git integration fields
+    learning_source: LearningSource = Field(
+        default=LearningSource.SESSION,
+        description="Source from which this learning was extracted"
+    )
+    git_metadata: Optional[GitSourceMetadata] = Field(
+        default=None,
+        description="Git-specific metadata when source is git-related"
+    )
+    co_authors: list[str] = Field(
+        default_factory=list,
+        description="Co-authors from Co-Authored-By git trailers"
     )
 
     def model_post_init(self, __context) -> None:
