@@ -12,6 +12,9 @@ wheels/
 # Local Claude state (ledgers, handoffs, cache)
 .claude/
 
+# Node.js / Bun
+node_modules/
+
 # Editor files
 *.swp
 *.swo
