@@ -14,6 +14,9 @@ from shared import (
     is_valid_learning,
     save_handoff,
     load_latest_handoff,
+    ExtractionSource,
+    DEFAULT_SOURCE_CONFIDENCE,
+    get_confidence_for_source,
 )
 
 
@@ -243,3 +246,102 @@ class TestHandoffRoundtrip:
         assert loaded["pending_tasks"] == []
         assert loaded["blockers"] == []
         assert loaded["modified_files"] == []
+
+
+class TestExtractionSource:
+    """Tests for ExtractionSource enum and confidence weighting."""
+
+    def test_extraction_source_values(self):
+        """Should have the correct source values."""
+        assert ExtractionSource.USER_TAGGED.value == "user_tagged"
+        assert ExtractionSource.STOP_HOOK.value == "stop_hook"
+        assert ExtractionSource.LLM_ANALYSIS.value == "llm_analysis"
+        assert ExtractionSource.CONSENSUS.value == "consensus"
+
+    def test_default_source_confidence_values(self):
+        """Should have correct default confidence values."""
+        assert DEFAULT_SOURCE_CONFIDENCE[ExtractionSource.USER_TAGGED] == 0.70
+        assert DEFAULT_SOURCE_CONFIDENCE[ExtractionSource.STOP_HOOK] == 0.50
+        assert DEFAULT_SOURCE_CONFIDENCE[ExtractionSource.LLM_ANALYSIS] == 0.40
+        assert DEFAULT_SOURCE_CONFIDENCE[ExtractionSource.CONSENSUS] == 0.85
+
+    def test_get_confidence_for_source_defaults(self):
+        """Should return default confidence when no settings provided."""
+        assert get_confidence_for_source(ExtractionSource.USER_TAGGED) == 0.70
+        assert get_confidence_for_source(ExtractionSource.STOP_HOOK) == 0.50
+        assert get_confidence_for_source(ExtractionSource.LLM_ANALYSIS) == 0.40
+        assert get_confidence_for_source(ExtractionSource.CONSENSUS) == 0.85
+
+    def test_get_confidence_for_source_with_settings(self):
+        """Should use settings values when provided."""
+        settings = {
+            "extraction": {
+                "user_tagged_confidence": 0.80,
+                "stop_hook_confidence": 0.60,
+                "llm_analysis_confidence": 0.50,
+                "consensus_confidence": 0.90,
+            }
+        }
+        assert get_confidence_for_source(ExtractionSource.USER_TAGGED, settings) == 0.80
+        assert get_confidence_for_source(ExtractionSource.STOP_HOOK, settings) == 0.60
+        assert get_confidence_for_source(ExtractionSource.LLM_ANALYSIS, settings) == 0.50
+        assert get_confidence_for_source(ExtractionSource.CONSENSUS, settings) == 0.90
+
+    def test_get_confidence_for_source_partial_settings(self):
+        """Should fall back to defaults for missing settings."""
+        settings = {
+            "extraction": {
+                "user_tagged_confidence": 0.75,
+                # Other values not provided
+            }
+        }
+        assert get_confidence_for_source(ExtractionSource.USER_TAGGED, settings) == 0.75
+        # These should use defaults
+        assert get_confidence_for_source(ExtractionSource.STOP_HOOK, settings) == 0.50
+        assert get_confidence_for_source(ExtractionSource.LLM_ANALYSIS, settings) == 0.40
+
+    def test_extract_learnings_with_source_parameter(self):
+        """Should use the source parameter for confidence weighting."""
+        text = """
+        [DISCOVERY] The codebase uses a plugin architecture for extensions
+        """
+
+        # Test with USER_TAGGED (default)
+        learnings = extract_learnings(text, source=ExtractionSource.USER_TAGGED)
+        assert len(learnings) == 1
+        assert learnings[0]["confidence"] == 0.70
+        assert learnings[0]["extraction_source"] == "user_tagged"
+
+        # Test with STOP_HOOK
+        learnings = extract_learnings(text, source=ExtractionSource.STOP_HOOK)
+        assert len(learnings) == 1
+        assert learnings[0]["confidence"] == 0.50
+        assert learnings[0]["extraction_source"] == "stop_hook"
+
+        # Test with LLM_ANALYSIS
+        learnings = extract_learnings(text, source=ExtractionSource.LLM_ANALYSIS)
+        assert len(learnings) == 1
+        assert learnings[0]["confidence"] == 0.40
+        assert learnings[0]["extraction_source"] == "llm_analysis"
+
+    def test_extract_learnings_with_custom_settings(self):
+        """Should respect custom confidence settings."""
+        text = """
+        [PATTERN] Use dependency injection for better testability
+        """
+
+        settings = {
+            "extraction": {
+                "user_tagged_confidence": 0.90,
+            }
+        }
+
+        learnings = extract_learnings(
+            text,
+            source=ExtractionSource.USER_TAGGED,
+            settings=settings
+        )
+
+        assert len(learnings) == 1
+        assert learnings[0]["confidence"] == 0.90
+        assert learnings[0]["extraction_source"] == "user_tagged"

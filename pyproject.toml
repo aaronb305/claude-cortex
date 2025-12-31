@@ -12,6 +12,8 @@ dependencies = [
     "fastembed>=0.4.0",
     "sqlite-vec>=0.1.0",
     "cryptography>=46.0.3",
+    # MCP server for Claude Code integration
+    "mcp>=1.0.0",
 ]
 
 [project.scripts]

@@ -1,6 +1,6 @@
 """Ledger module for blockchain-style knowledge storage."""
 
-from .models import Block, Learning, Outcome, LearningCategory, ProjectContext, OutcomeResult, compute_content_hash
+from .models import Block, Learning, Outcome, LearningCategory, PrivacyLevel, ProjectContext, OutcomeResult, compute_content_hash
 from .chain import Ledger, file_lock
 from .merkle import MerkleTree, MerkleNode
 from .objects import ObjectStore
@@ -27,6 +27,7 @@ __all__ = [
     "Outcome",
     "OutcomeResult",
     "LearningCategory",
+    "PrivacyLevel",
     "Ledger",
     "ProjectContext",
     "compute_content_hash",

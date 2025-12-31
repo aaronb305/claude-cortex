@@ -49,6 +49,9 @@ from .transcript import read_transcript, extract_assistant_messages
 
 # Learning extraction
 from .extraction import (
+    ExtractionSource,
+    DEFAULT_SOURCE_CONFIDENCE,
+    get_confidence_for_source,
     is_valid_learning,
     extract_learnings,
     extract_tasks_from_text,
@@ -75,10 +78,23 @@ from .analysis import (
 # Unified learning extraction
 from .unified import extract_and_store_learnings
 
+# Settings management
+from .settings import (
+    DEFAULT_SETTINGS,
+    load_settings,
+    get_setting,
+    get_settings_path,
+    should_show_orchestration,
+)
+
 
 __all__ = [
     # Constants
     "LearningCategory",
+    # Extraction source and confidence weighting
+    "ExtractionSource",
+    "DEFAULT_SOURCE_CONFIDENCE",
+    "get_confidence_for_source",
     # Lazy init functions (preferred)
     "_init_package_imports",
     "_init_analysis_imports",
@@ -130,4 +146,10 @@ __all__ = [
     # Backwards compatibility placeholders
     "PACKAGE_AVAILABLE",
     "ANALYSIS_AVAILABLE",
+    # Settings management
+    "DEFAULT_SETTINGS",
+    "load_settings",
+    "get_setting",
+    "get_settings_path",
+    "should_show_orchestration",
 ]

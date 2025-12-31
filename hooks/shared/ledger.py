@@ -226,6 +226,7 @@ def append_block(
                     "category": learning["category"],
                     "content": learning["content"],  # Cache content for O(1) lookup
                     "confidence": learning["confidence"],
+                    "privacy": learning.get("privacy", "public"),  # Privacy level
                     "outcome_count": 0,
                     "last_updated": timestamp,
                 }

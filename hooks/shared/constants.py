@@ -12,4 +12,12 @@ class LearningCategory:
     PATTERN = "pattern"
 
 
-__all__ = ["LearningCategory"]
+class PrivacyLevel:
+    """Privacy level constants."""
+    PUBLIC = "public"
+    PROJECT = "project"
+    PRIVATE = "private"
+    REDACTED = "redacted"
+
+
+__all__ = ["LearningCategory", "PrivacyLevel"]

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING, Generator
 
-from .models import Block, Learning, LearningCategory, OutcomeResult, compute_content_hash
+from .models import Block, Learning, LearningCategory, OutcomeResult, PrivacyLevel, compute_content_hash
 from .merkle import MerkleTree
 from .objects import ObjectStore
 
@@ -1240,7 +1240,10 @@ class Ledger:
         global_ledger: "Ledger",
         confidence_threshold: float = 0.8,
     ) -> list[str]:
-        """Promote high-confidence learnings to the global ledger.
+        """Promote high-confidence PUBLIC learnings to the global ledger.
+
+        Only learnings with privacy=PUBLIC can be promoted. Learnings with
+        privacy=PROJECT, PRIVATE, or REDACTED are skipped.
 
         Args:
             global_ledger: The global ledger to promote to
@@ -1273,7 +1276,14 @@ class Ledger:
             learning_id = learning_info["id"]
             learning = learning_lookup.get(learning_id)
 
-            if learning and learning_id not in existing_global_ids:
+            if not learning:
+                continue
+
+            # Only promote PUBLIC learnings (skip PROJECT, PRIVATE, REDACTED)
+            if learning.privacy != PrivacyLevel.PUBLIC:
+                continue
+
+            if learning_id not in existing_global_ids:
                 global_ledger.append_block(
                     session_id="promotion",
                     learnings=[learning],

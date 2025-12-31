@@ -299,6 +299,24 @@ Tag immediately after:
 [PATTERN] <reusable solution that applies beyond this specific case>
 ```
 
+### Privacy Suffixes
+
+Control how learnings are stored and shared with privacy suffixes:
+
+```
+[DISCOVERY:private] API key format is ABC-XXX  # Never stored
+[PATTERN:project] Our internal auth pattern    # Stays in project ledger only
+[ERROR:redacted] Credentials in config file    # Content replaced with [REDACTED]
+[DECISION] Standard public learning            # Default: can be promoted to global
+```
+
+| Privacy Level | Stored | Promoted to Global | Content |
+|---------------|--------|-------------------|---------|
+| `public` (default) | Yes | Yes | Original |
+| `project` | Yes | No | Original |
+| `private` | No | N/A | Not stored |
+| `redacted` | Yes | Yes | Replaced with [REDACTED] |
+
 ### Examples
 
 ```
@@ -716,8 +734,140 @@ Analysis extracts:
 - **Key Decisions**: Important choices made during the session
 - **Metrics**: Duration, turns, tool usage, success rates
 
+## MCP Tools
+
+Claude Cortex exposes ledger operations as MCP (Model Context Protocol) tools for low-latency access from Claude Code.
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `search_learnings` | Full-text search with category filtering |
+| `get_learning` | Get full details of a learning by ID |
+| `record_outcome` | Record success/partial/failure outcome |
+| `list_learnings` | List learnings by confidence |
+| `ledger_stats` | Get ledger statistics |
+
+### Configuration
+
+MCP is auto-configured via `.mcp.json` in the plugin directory:
+
+```json
+{
+  "mcpServers": {
+    "claude-cortex": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "claude_cortex.mcp_server"],
+      "cwd": "${CLAUDE_PLUGIN_ROOT}",
+      "env": {"PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}/src"}
+    }
+  }
+}
+```
+
+### Usage
+
+MCP tools are available via `/mcp` in Claude Code:
+- `search_learnings("authentication")` - Search for learnings
+- `get_learning("abc123", show_decay=True)` - Get learning with decay info
+- `record_outcome("abc123", "success", "Worked perfectly")` - Record outcome
+
+## TUI Dashboard
+
+A terminal user interface for browsing and managing learnings.
+
+### Quick Start
+
+```bash
+cd tui
+bun install
+bun run tui
+```
+
+### Keyboard Shortcuts
+
+**Navigation (Vim-style):**
+| Key | Action |
+|-----|--------|
+| `j` / `Down Arrow` | Move down in list |
+| `k` / `Up Arrow` | Move up in list |
+| `g` | Jump to first item |
+| `G` | Jump to last item |
+| `Enter` | View selected item details |
+| `Esc` | Go back / close |
+
+**Views:**
+| Key | Action |
+|-----|--------|
+| `l` | Show list view (from detail) |
+| `/` | Open search |
+| `Tab` | Toggle search input focus |
+
+**Actions:**
+| Key | Action |
+|-----|--------|
+| `r` | Refresh data |
+| `q` | Quit application |
+
+## Confidence-Weighted Extraction
+
+Learnings are assigned confidence based on their extraction source:
+
+| Source | Default Confidence | Description |
+|--------|-------------------|-------------|
+| `USER_TAGGED` | 0.70 | User explicitly tagged with [DISCOVERY], etc. |
+| `STOP_HOOK` | 0.50 | Auto-detected by stop hook patterns |
+| `LLM_ANALYSIS` | 0.40 | AI extracted from transcript |
+| `CONSENSUS` | 0.85 | Multiple sources agree |
+
+### Two-Pass Extraction
+
+1. **Fast pass** (default): Extract tagged content only
+2. **Deep pass** (optional): Run LLM analysis for additional insights
+
+Enable deep pass in settings when fast pass yields few results.
+
+## Settings Configuration
+
+Configure behavior via `.claude/cortex-settings.json`:
+
+```json
+{
+  "session_start": {
+    "global_learning_limit": 3,
+    "project_learning_limit": 3,
+    "global_min_confidence": 0.8,
+    "project_min_confidence": 0.7,
+    "show_orchestration_guidance": false,
+    "handoff_max_completed_tasks": 3,
+    "handoff_max_pending_tasks": 5,
+    "summary_limit": 2,
+    "summary_max_length": 300,
+    "suggestion_limit": 2
+  },
+  "extraction": {
+    "user_tagged_confidence": 0.70,
+    "stop_hook_confidence": 0.50,
+    "llm_analysis_confidence": 0.40,
+    "consensus_confidence": 0.85,
+    "enable_deep_pass": false,
+    "deep_pass_threshold": 3
+  },
+  "privacy": {
+    "default_level": "public",
+    "allow_private_tag": true,
+    "allow_project_tag": true
+  }
+}
+```
+
+Settings are loaded from:
+1. Global: `~/.claude/cortex-settings.json`
+2. Project: `.claude/cortex-settings.json` (overrides global)
+
 ## Commands
 
 - Install deps: `uv sync`
 - Run tests: `uv run pytest`
 - CLI: `uv run cclaude`
+- TUI: `cd tui && bun run tui`

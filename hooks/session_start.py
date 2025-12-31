@@ -24,18 +24,25 @@ from shared import (
     get_learnings_by_confidence,
     get_learning_content,
     detect_project_type,
+    load_settings,
+    should_show_orchestration,
 )
 
 
-def format_handoff_context(handoff: dict) -> str:
+def format_handoff_context(handoff: dict, settings: dict) -> str:
     """Format a handoff for session context injection.
 
     Args:
         handoff: The handoff data.
+        settings: Settings dictionary with limits.
 
     Returns:
         Formatted context string.
     """
+    ss = settings.get("session_start", {})
+    max_completed = ss.get("handoff_max_completed_tasks", 3)
+    max_pending = ss.get("handoff_max_pending_tasks", 5)
+
     lines = ["## Previous Session Handoff"]
     lines.append(f"Session: {handoff.get('session_id', 'unknown')}")
     lines.append(f"Timestamp: {handoff.get('timestamp', 'unknown')}")
@@ -44,21 +51,25 @@ def format_handoff_context(handoff: dict) -> str:
     completed = handoff.get("completed_tasks", [])
     if completed:
         lines.append("### Completed")
-        for task in completed:
+        for task in completed[:max_completed]:
             lines.append(f"- {task}")
+        if len(completed) > max_completed:
+            lines.append(f"- ...+{len(completed) - max_completed} more")
         lines.append("")
 
     pending = handoff.get("pending_tasks", [])
     if pending:
         lines.append("### Pending Tasks (continue from here)")
-        for task in pending:
+        for task in pending[:max_pending]:
             lines.append(f"- {task}")
+        if len(pending) > max_pending:
+            lines.append(f"- ...+{len(pending) - max_pending} more")
         lines.append("")
 
     blockers = handoff.get("blockers", [])
     if blockers:
         lines.append("### Blockers to Address")
-        for blocker in blockers:
+        for blocker in blockers[:3]:  # Limit blockers too
             lines.append(f"- {blocker}")
         lines.append("")
 
@@ -72,7 +83,11 @@ def format_handoff_context(handoff: dict) -> str:
     context_notes = handoff.get("context_notes", "")
     if context_notes:
         lines.append("### Context Notes")
-        lines.append(context_notes)
+        # Truncate long notes
+        if len(context_notes) > 200:
+            lines.append(context_notes[:200] + "...")
+        else:
+            lines.append(context_notes)
         lines.append("")
 
     return "\n".join(lines)
@@ -112,11 +127,12 @@ def load_recent_summaries(project_dir: Path, limit: int = 3) -> list[dict]:
     return results
 
 
-def format_summaries_context(summaries: list[dict]) -> str:
+def format_summaries_context(summaries: list[dict], max_length: int = 300) -> str:
     """Format summaries for session context injection.
 
     Args:
         summaries: List of summary data dictionaries.
+        max_length: Maximum length for summary text truncation.
 
     Returns:
         Formatted context string.
@@ -139,22 +155,22 @@ def format_summaries_context(summaries: list[dict]) -> str:
         lines.append("")
 
         if summary_text:
-            # Truncate if too long
-            if len(summary_text) > 500:
-                lines.append(summary_text[:500] + "...")
+            # Truncate if too long (use configurable max_length)
+            if len(summary_text) > max_length:
+                lines.append(summary_text[:max_length] + "...")
             else:
                 lines.append(summary_text)
             lines.append("")
 
         if key_decisions:
             lines.append("**Key Decisions:**")
-            for decision in key_decisions[:5]:
+            for decision in key_decisions[:3]:  # Reduced from 5 to 3
                 lines.append(f"- {decision}")
             lines.append("")
 
         if files_discussed:
             lines.append("**Files Involved:**")
-            for file_path in files_discussed[:10]:
+            for file_path in files_discussed[:5]:  # Reduced from 10 to 5
                 lines.append(f"- {file_path}")
             lines.append("")
 
@@ -291,21 +307,37 @@ Example: "Implement feature X with tests"
 
 
 def build_context(project_dir: Optional[Path]) -> str:
-    """Build context string from ledgers, handoffs, summaries, and project info."""
+    """Build context string from ledgers, handoffs, summaries, and project info.
+
+    Uses settings from cortex-settings.json for limits and thresholds.
+    """
+    # Load settings
+    settings = load_settings(project_dir)
+    ss = settings.get("session_start", {})
+
+    # Get configurable limits
+    global_limit = ss.get("global_learning_limit", 3)
+    project_limit = ss.get("project_learning_limit", 3)
+    global_min_conf = ss.get("global_min_confidence", 0.8)
+    project_min_conf = ss.get("project_min_confidence", 0.7)
+    summary_limit = ss.get("summary_limit", 2)
+    summary_max_len = ss.get("summary_max_length", 300)
+    suggestion_limit = ss.get("suggestion_limit", 2)
+
     lines = []
 
     # Load and display latest handoff if available
     if project_dir and project_dir.exists():
         handoff = load_latest_handoff(project_dir)
         if handoff:
-            handoff_context = format_handoff_context(handoff)
+            handoff_context = format_handoff_context(handoff, settings)
             lines.append(handoff_context)
 
     # Load and display recent summaries if available
     if project_dir and project_dir.exists():
-        summaries = load_recent_summaries(project_dir, limit=3)
+        summaries = load_recent_summaries(project_dir, limit=summary_limit)
         if summaries:
-            summaries_context = format_summaries_context(summaries)
+            summaries_context = format_summaries_context(summaries, max_length=summary_max_len)
             lines.append(summaries_context)
 
     # Project environment context
@@ -319,10 +351,12 @@ def build_context(project_dir: Optional[Path]) -> str:
                 lines.append(f"- {name}: `{cmd}`")
             lines.append("")
 
-    # Global ledger learnings
+    # Global ledger learnings (reduced limits, higher threshold)
     global_ledger = get_ledger_path(None, is_global=True)
     if global_ledger.exists():
-        global_learnings = get_learnings_by_confidence(global_ledger, min_confidence=0.6, limit=10)
+        global_learnings = get_learnings_by_confidence(
+            global_ledger, min_confidence=global_min_conf, limit=global_limit
+        )
         if global_learnings:
             lines.append("## Global Knowledge (high confidence)")
             for l in global_learnings:
@@ -330,14 +364,17 @@ def build_context(project_dir: Optional[Path]) -> str:
                 if content:
                     conf = int(l.get("confidence", 0) * 100)
                     cat = l.get("category", "unknown")
-                    lines.append(f"- [{cat}] ({conf}%): {content[:200]}")
+                    # Truncate to 150 chars for token efficiency
+                    lines.append(f"- [{cat}] ({conf}%): {content[:150]}")
             lines.append("")
 
-    # Project ledger learnings
+    # Project ledger learnings (reduced limits)
     if project_dir:
         project_ledger = get_ledger_path(str(project_dir), is_global=False)
         if project_ledger.exists():
-            project_learnings = get_learnings_by_confidence(project_ledger, min_confidence=0.5, limit=10)
+            project_learnings = get_learnings_by_confidence(
+                project_ledger, min_confidence=project_min_conf, limit=project_limit
+            )
             if project_learnings:
                 lines.append("## Project Knowledge")
                 for l in project_learnings:
@@ -345,16 +382,16 @@ def build_context(project_dir: Optional[Path]) -> str:
                     if content:
                         conf = int(l.get("confidence", 0) * 100)
                         cat = l.get("category", "unknown")
-                        lines.append(f"- [{cat}] ({conf}%): {content[:200]}")
+                        lines.append(f"- [{cat}] ({conf}%): {content[:150]}")
                 lines.append("")
 
-    # Cross-project suggestions from global ledger
+    # Cross-project suggestions from global ledger (reduced limit)
     if project_dir and project_dir.exists():
-        suggestions = get_cross_project_suggestions(project_dir, limit=3)
+        suggestions = get_cross_project_suggestions(project_dir, limit=suggestion_limit)
         if suggestions:
             lines.append(suggestions)
 
-    # Add learning extraction instructions
+    # Add learning extraction instructions (condensed)
     if lines:
         lines.append("## Knowledge Capture")
         lines.append("As you work, document insights using these tags:")
@@ -364,8 +401,13 @@ def build_context(project_dir: Optional[Path]) -> str:
         lines.append("- [PATTERN] Reusable solutions identified")
         lines.append("")
 
-    # Add orchestration guidance
-    lines.append(build_orchestration_guidance())
+    # Add orchestration guidance ONLY if should be shown
+    if project_dir and should_show_orchestration(project_dir):
+        lines.append(build_orchestration_guidance())
+    elif lines:
+        # Add brief reminder instead of full guidance
+        lines.append("*Use `search_learnings` MCP tool or `/search-learnings` skill for deeper context.*")
+        lines.append("")
 
     return "\n".join(lines) if lines else ""
 

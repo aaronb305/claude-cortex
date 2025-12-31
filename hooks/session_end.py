@@ -19,9 +19,11 @@ from shared import (
     get_learning_content,
     get_session_learnings_path,
     load_session_learnings,
+    load_settings,
     read_json,
     read_transcript,
 )
+from shared.extraction import ExtractionSource
 
 
 def get_learnings_without_recent_outcomes(
@@ -159,8 +161,21 @@ def main():
     if not assistant_text:
         sys.exit(0)
 
+    # Load settings to check for deep pass configuration
+    project_dir = Path(cwd) if cwd else Path.cwd()
+    settings = load_settings(project_dir)
+    extraction_settings = settings.get("extraction", {})
+
     # Extract and store learnings using unified function
-    extract_and_store_learnings(assistant_text, cwd, session_id)
+    # User-tagged learnings get higher confidence (0.70 default)
+    extract_and_store_learnings(
+        assistant_text,
+        cwd,
+        session_id,
+        source=ExtractionSource.USER_TAGGED,
+        enable_deep_pass=extraction_settings.get("enable_deep_pass", False),
+        deep_pass_threshold=extraction_settings.get("deep_pass_threshold", 3),
+    )
 
     # Check for referenced learnings that need outcome feedback
     session_learnings_path = get_session_learnings_path(cwd)

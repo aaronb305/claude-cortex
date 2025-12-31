@@ -42,6 +42,15 @@ class LearningCategory(str, Enum):
     PATTERN = "pattern"      # Reusable solutions, templates, conventions
 
 
+class PrivacyLevel(str, Enum):
+    """Privacy levels for learnings."""
+
+    PUBLIC = "public"      # Normal learning, can be promoted to global
+    PROJECT = "project"    # Stays in project ledger only
+    PRIVATE = "private"    # Never persisted (filtered before storage)
+    REDACTED = "redacted"  # Logged as redacted (content replaced)
+
+
 class OutcomeResult(str, Enum):
     """Result of applying knowledge."""
 
@@ -95,6 +104,10 @@ class Learning(BaseModel):
         description="Current confidence level (0.0 to 1.0)",
         ge=0.0,
         le=1.0
+    )
+    privacy: PrivacyLevel = Field(
+        default=PrivacyLevel.PUBLIC,
+        description="Privacy level controlling storage and promotion behavior"
     )
     source: Optional[str] = Field(
         default=None,

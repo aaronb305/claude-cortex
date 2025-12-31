@@ -171,29 +171,42 @@ def run(
     default=False,
     help="Show both stored and effective (decayed) confidence",
 )
+@click.option(
+    "--json", "json_output",
+    is_flag=True,
+    default=False,
+    help="Output as JSON",
+)
 def list_learnings(
     project: Optional[Path],
     min_confidence: float,
     category: Optional[str],
     limit: int,
     show_decay: bool,
+    json_output: bool,
 ):
     """List learnings from the ledger."""
+    import json as json_module
+
     # Validate numeric parameters
     if min_confidence < 0 or min_confidence > 1:
-        console.print("[red]Error: --min-confidence must be between 0 and 1[/red]")
+        if not json_output:
+            console.print("[red]Error: --min-confidence must be between 0 and 1[/red]")
         raise SystemExit(1)
 
     if limit <= 0:
-        console.print("[red]Error: --limit must be positive[/red]")
+        if not json_output:
+            console.print("[red]Error: --limit must be positive[/red]")
         raise SystemExit(1)
 
     if project:
         ledger = get_project_ledger(project.resolve())
-        console.print(f"[bold]Project ledger:[/bold] {project}")
+        if not json_output:
+            console.print(f"[bold]Project ledger:[/bold] {project}")
     else:
         ledger = get_global_ledger()
-        console.print("[bold]Global ledger[/bold]")
+        if not json_output:
+            console.print("[bold]Global ledger[/bold]")
 
     cat_filter = LearningCategory(category) if category else None
     learnings = ledger.get_learnings_by_confidence(
@@ -201,6 +214,27 @@ def list_learnings(
         category=cat_filter,
         limit=limit,
     )
+
+    # JSON output mode
+    if json_output:
+        output = []
+        for l in learnings:
+            output.append({
+                "id": l["id"],
+                "category": l["category"],
+                "content": l.get("content", ""),
+                "confidence": l["confidence"],
+                "effective_confidence": l.get("effective_confidence", l["confidence"]),
+                "timestamp": l.get("timestamp", ""),
+                "project": l.get("project"),
+                "tags": l.get("tags", []),
+                "derived_from": l.get("derived_from"),
+                "promoted_to": l.get("promoted_to"),
+                "outcome_count": l.get("outcome_count", 0),
+                "last_touched": l.get("last_touched"),
+            })
+        click.echo(json_module.dumps(output, indent=2, default=str))
+        return
 
     if not learnings:
         console.print("[dim]No learnings found[/dim]")
@@ -536,11 +570,18 @@ def show(learning_id: str, project: Optional[Path], show_decay: bool):
     default=20,
     help="Maximum results to show",
 )
+@click.option(
+    "--json", "json_output",
+    is_flag=True,
+    default=False,
+    help="Output as JSON",
+)
 def search(
     query: str,
     project: Optional[Path],
     category: Optional[str],
     limit: int,
+    json_output: bool,
 ):
     """Search learnings using full-text search.
 
@@ -550,9 +591,12 @@ def search(
     - Boolean operators: auth AND token
     - Prefix matching: auth*
     """
+    import json as json_module
+
     # Validate numeric parameters
     if limit <= 0:
-        console.print("[red]Error: --limit must be positive[/red]")
+        if not json_output:
+            console.print("[red]Error: --limit must be positive[/red]")
         raise SystemExit(1)
 
     # Get the appropriate search index
@@ -568,6 +612,21 @@ def search(
             results = index.search_by_category(query, category, limit=limit)
         else:
             results = index.search(query, limit=limit)
+
+        # JSON output mode
+        if json_output:
+            output = []
+            for result in results:
+                # Strip HTML marks from snippet for JSON
+                clean_snippet = result.snippet.replace("<mark>", "").replace("</mark>", "")
+                output.append({
+                    "id": result.learning_id,
+                    "category": result.category,
+                    "content": clean_snippet,
+                    "confidence": result.confidence,
+                })
+            click.echo(json_module.dumps(output, indent=2))
+            return
 
         if not results:
             console.print(f"[dim]No results found for '{query}'[/dim]")

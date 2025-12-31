@@ -115,10 +115,19 @@ install_hooks() {
 
     # Copy hook scripts
     if [ -d "$script_dir/hooks" ]; then
+        # Copy top-level hook scripts
         cp "$script_dir/hooks/"*.py "$HOOKS_DIR/" 2>/dev/null || true
         cp "$script_dir/hooks/"*.sh "$HOOKS_DIR/" 2>/dev/null || true
         chmod +x "$HOOKS_DIR/"*.py 2>/dev/null || true
         chmod +x "$HOOKS_DIR/"*.sh 2>/dev/null || true
+
+        # Copy shared module (required for hooks)
+        if [ -d "$script_dir/hooks/shared" ]; then
+            mkdir -p "$HOOKS_DIR/shared"
+            cp -r "$script_dir/hooks/shared/"* "$HOOKS_DIR/shared/" 2>/dev/null || true
+            print_success "Shared hook modules installed"
+        fi
+
         print_success "Hook scripts installed to $HOOKS_DIR"
     else
         print_warning "No hooks directory found in source"
@@ -296,6 +305,17 @@ print_usage() {
     echo ""
     echo "  # Verify ledger integrity"
     echo "  cclaude verify"
+    echo ""
+    echo "MCP Tools (for fast search):"
+    echo ""
+    echo "  # MCP server is auto-configured via plugin .mcp.json"
+    echo "  # Available tools: search_learnings, get_learning, record_outcome"
+    echo "  # Use /mcp in Claude Code to see available tools"
+    echo ""
+    echo "Configuration:"
+    echo ""
+    echo "  # Customize settings in .claude/cortex-settings.json"
+    echo "  # See ROADMAP.md for configuration options"
     echo ""
     echo "Ledger location: $LEDGER_DIR"
     echo "Hooks location:  $HOOKS_DIR"
