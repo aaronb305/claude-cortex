@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "claude-cortex": {
-      "command": "uv",
-      "args": ["run", "python", "-m", "claude_cortex.mcp_server"],
+      "command": "/home/aaron/projects/claude-cortex/.venv/bin/python",
+      "args": ["-m", "claude_cortex.mcp_server"],
       "cwd": "/home/aaron/projects/claude-cortex",
       "env": {
         "PYTHONPATH": "/home/aaron/projects/claude-cortex/src"
