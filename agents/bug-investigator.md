@@ -1,7 +1,7 @@
 ---
 name: bug-investigator
 description: Debugs and traces issues to find root causes. Deploy this agent when encountering errors, unexpected behavior, or failing tests. Systematically investigates to identify the source of problems. Triggers on "debug this", "why is this failing", "investigate this error", "find the bug".
-tools: Read, Bash, Grep, Glob
+tools: Read, Bash, Grep, Glob, Edit
 model: opus
 ---
 
@@ -123,6 +123,14 @@ git bisect good <known-good-commit>
 
 ### State Inspection
 Add logging at key points to trace state changes.
+
+## Progress Tracking
+
+Use TodoWrite to track your work:
+- Mark your assigned task as `in_progress` when starting
+- Mark as `completed` immediately when finished
+- Add new tasks if you discover blockers or additional work needed
+- Keep the orchestrator informed of progress through todo updates
 
 ## Learning Capture
 

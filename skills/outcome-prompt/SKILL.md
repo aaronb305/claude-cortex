@@ -1,6 +1,6 @@
 ---
 name: outcome-prompt
-description: Suggests outcome recording for recently referenced learnings. Use this skill to check if any learnings from the current or recent sessions need outcome feedback, and to prompt the user for recording outcomes. Essential for maintaining accurate confidence scores in the ledger. **Complexity indicator**: Quick check and suggestion operation. For in-depth outcome analysis or batch recording, use the `outcome-tracker` agent or CLI commands instead.
+description: Check and suggest outcome recording for recently applied learnings. Triggers on "check outcomes", "record outcome", "update confidence".
 allowed-tools: Bash, Read
 ---
 
@@ -37,7 +37,7 @@ The SessionEnd hook automatically detects referenced learnings and suggests outc
 
 ### List Recently Referenced Learnings
 ```bash
-cd ~/projects/continuous-claude-custom && uv run cclaude outcomes pending
+uv run cclaude outcomes pending
 ```
 
 This shows learnings that:
@@ -46,7 +46,7 @@ This shows learnings that:
 
 ### List All Learnings Needing Feedback
 ```bash
-cd ~/projects/continuous-claude-custom && uv run cclaude outcomes pending --all
+uv run cclaude outcomes pending --all
 ```
 
 Shows all learnings with low outcome counts, not just recently referenced ones.

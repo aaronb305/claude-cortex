@@ -69,6 +69,14 @@ When complete, report:
 - Add excessive comments
 - Over-abstract prematurely
 
+## Progress Tracking
+
+Use TodoWrite to track your work:
+- Mark your assigned task as `in_progress` when starting
+- Mark as `completed` immediately when finished
+- Add new tasks if you discover blockers or additional work needed
+- Keep the orchestrator informed of progress through todo updates
+
 ## Learning Capture
 
 Tag insights discovered during implementation:

@@ -1,6 +1,6 @@
 ---
 name: ledger-knowledge
-description: Access and query the blockchain-style knowledge ledger. Use when needing to recall prior learnings, check what patterns were discovered, or find relevant knowledge from previous sessions. Triggers on "list learnings", "show learning", "quick lookup", "check the ledger". **Complexity indicator**: Quick, focused operation for direct ledger queries. For deep analysis across multiple learnings with ranking and contextualization, use the `knowledge-retriever` agent instead.
+description: Query the blockchain-style knowledge ledger for prior learnings, patterns, and decisions. Triggers on "list learnings", "show learning", "check the ledger", "what do we know about".
 allowed-tools: Bash, Read
 ---
 
@@ -28,7 +28,7 @@ ledger/
 
 ### List learnings
 ```bash
-cd ~/projects/continuous-claude-custom && uv run cclaude list [options]
+uv run cclaude list [options]
 ```
 
 Options:
@@ -39,22 +39,22 @@ Options:
 
 ### Show learning details
 ```bash
-cd ~/projects/continuous-claude-custom && uv run cclaude show <learning_id>
+uv run cclaude show <learning_id>
 ```
 
 ### Verify chain integrity
 ```bash
-cd ~/projects/continuous-claude-custom && uv run cclaude verify
+uv run cclaude verify
 ```
 
 ## Learning Categories
 
-| Category | Icon | Description |
-|----------|------|-------------|
-| discovery | 🔍 | New information about codebases, APIs, patterns |
-| decision | ⚖️ | Architectural choices and rationale |
-| error | ⚠️ | Mistakes to avoid, gotchas, failed approaches |
-| pattern | 🔄 | Reusable solutions, conventions, templates |
+| Category | Description |
+|----------|-------------|
+| discovery | New information about codebases, APIs, patterns |
+| decision | Architectural choices and rationale |
+| error | Mistakes to avoid, gotchas, failed approaches |
+| pattern | Reusable solutions, conventions, templates |
 
 ## Confidence Levels
 
@@ -68,17 +68,17 @@ cd ~/projects/continuous-claude-custom && uv run cclaude verify
 
 **Find patterns for authentication:**
 ```bash
-cd ~/projects/continuous-claude-custom && uv run cclaude list --category pattern | grep -i auth
+uv run cclaude list --category pattern | grep -i auth
 ```
 
 **Get high-confidence learnings:**
 ```bash
-cd ~/projects/continuous-claude-custom && uv run cclaude list --min-confidence 0.8
+uv run cclaude list --min-confidence 0.8
 ```
 
 **Check project-specific knowledge:**
 ```bash
-cd ~/projects/continuous-claude-custom && uv run cclaude list -p . --limit 10
+uv run cclaude list -p . --limit 10
 ```
 
 ## Integration Notes

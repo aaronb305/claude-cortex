@@ -1,6 +1,6 @@
 ---
 name: handoff-management
-description: Manage work-in-progress handoffs for session continuity. Use when you need to save current work state, resume from a previous session, or review what was in progress. Triggers on "save my progress", "create handoff", "show handoff", "list handoffs". **Complexity indicator**: Quick save/load operations for work-in-progress state. For full session context restoration with analysis of learnings and git state, use the `session-continuity` agent instead.
+description: Save and load work-in-progress state for session continuity. Triggers on "save progress", "create handoff", "show handoff", "what was I working on".
 allowed-tools: Bash, Read, Write
 ---
 

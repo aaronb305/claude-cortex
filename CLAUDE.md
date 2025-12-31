@@ -79,6 +79,8 @@ The plugin uses hooks to provide seamless integration:
 - **PostToolUse**: Nudges continuation when tasks remain, tracks learning references
 - **PreCompact**: Saves handoff + summary + extracts learnings before compaction
 - **SessionEnd**: Extracts new learnings from transcript, suggests outcome recording
+- **SubagentStop**: Tracks agent deployments and effectiveness when subagents complete
+- **Stop**: Nudges for immediate learning tagging after significant work
 
 ### Agents
 
@@ -102,6 +104,7 @@ All agents use **opus** as the default model.
 | `learning-extractor` | "extract learnings", end of session |
 | `session-continuity` | "resume my work", "what was I working on" |
 | `outcome-tracker` | "record outcome", "this worked" |
+| `task-orchestrator` | "decompose task", "plan implementation", "what agents to use" |
 
 ### Skills
 
@@ -111,7 +114,6 @@ All agents use **opus** as the default model.
 | `learning-capture` | Capture insights to ledger |
 | `handoff-management` | Save/load work-in-progress state |
 | `search-learnings` | Full-text search across learnings |
-| `continuous-execution` | Run autonomous iteration mode |
 | `outcome-prompt` | Suggest outcome recording for applied learnings |
 
 ### CLI Commands (Optional Power Tools)
@@ -170,19 +172,80 @@ uv run cclaude suggest --apply <id>       # Import a suggestion to project ledge
 
 # Content cache migration (performance optimization)
 uv run cclaude migrate                    # Populate content cache in reinforcements.json
+```
 
-# Session analysis (Braintrust-like insights)
-uv run cclaude analyze session transcript.md --save-learnings
-uv run cclaude analyze metrics            # Aggregated metrics across sessions
+## Continuous Execution Mode
 
-# Sync commands
+Run Claude in autonomous continuous mode for multi-iteration tasks with automatic learning extraction.
+
+### Quick Start
+
+```bash
+# Basic continuous run (10 iterations max)
+uv run cclaude run "Implement user authentication"
+
+# With custom limits
+uv run cclaude run "Refactor auth module" \
+  --max-iterations 20 \
+  --max-cost 5.0 \
+  --max-time 60 \
+  --stale-threshold 3
+```
+
+### Command Options
+
+```bash
+uv run cclaude run <prompt> [options]
+
+Options:
+  -p, --project PATH       Project directory (default: current)
+  --max-iterations INT     Maximum iterations (default: 10)
+  --max-cost FLOAT         Maximum cost in USD
+  --max-time INT           Maximum time in minutes
+  --stale-threshold INT    Stop after N iterations without new learnings
+```
+
+### Stop Conditions
+
+The runner stops when ANY condition is met:
+
+| Condition | Flag | Description |
+|-----------|------|-------------|
+| Iteration limit | `--max-iterations` | Maximum number of iterations |
+| Cost limit | `--max-cost` | Maximum API cost in USD |
+| Time limit | `--max-time` | Maximum execution time in minutes |
+| Stale detection | `--stale-threshold` | N iterations without new learnings |
+
+### Recommended Limits
+
+- **Simple tasks**: 5-10 iterations
+- **Feature development**: 10-20 iterations
+- **Large refactors**: 15-25 iterations
+- **Always set cost limits** for budget control
+
+### Troubleshooting
+
+**Runner stops too early:**
+- Increase `--stale-threshold`
+- Check if learnings are being extracted (use explicit tags)
+
+**No learnings extracted:**
+- Use explicit tags: `[DISCOVERY]`, `[DECISION]`, `[ERROR]`, `[PATTERN]`
+- Rebuild search index: `uv run cclaude reindex`
+
+## Sync Commands
+
+```bash
 uv run cclaude sync status                # Show sync status and Merkle root
 uv run cclaude sync pull /path/to/remote  # Pull blocks from remote
 uv run cclaude sync push /path/to/remote  # Push blocks to remote
 uv run cclaude sync export backup.tar.gz  # Export to archive
 uv run cclaude sync import backup.tar.gz  # Import from archive
+```
 
-# Key management
+## Key Management
+
+```bash
 uv run cclaude keys generate --name "You" # Generate signing keypair
 uv run cclaude keys show                  # Show your public key
 uv run cclaude keys export -o key.pem     # Export public key
@@ -338,14 +401,16 @@ project/.claude/
 
 ~/projects/continuous-claude-custom/
 ├── .claude-plugin/            # Plugin manifest
-├── agents/                    # Custom agents (11 total)
-├── skills/                    # Skills (6)
+├── agents/                    # Custom agents (12 total)
+├── skills/                    # Skills (5)
 ├── hooks/                     # Hook scripts
 │   ├── shared.py              # Shared utilities (file locking, extraction)
 │   ├── session_start.py       # Inject ledger context + handoff
 │   ├── session_end.py         # Extract learnings + outcome suggestions
 │   ├── pre_compact.py         # Pre-compaction handoff + summary + extraction
-│   └── post_tool_use.py       # Continuation nudges + learning tracking
+│   ├── post_tool_use.py       # Continuation nudges + learning tracking
+│   ├── subagent_stop.py       # Agent deployment tracking + effectiveness
+│   └── stop.py                # Learning tagging nudges
 ├── src/continuous_claude/     # Python package
 │   ├── ledger/                # Blockchain implementation
 │   │   ├── chain.py           # Ledger management + search integration

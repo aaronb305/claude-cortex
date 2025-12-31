@@ -1,6 +1,6 @@
 ---
 name: learning-capture
-description: Capture and persist learnings to the blockchain ledger. Use when discovering important insights, making significant decisions, encountering errors worth remembering, or identifying reusable patterns. Essential for building persistent memory across sessions. **Complexity indicator**: Direct tagging operation for explicit learning capture. For automatic extraction from conversations, use the `learning-extractor` agent instead.
+description: Capture insights to the blockchain ledger using tags. Use for discoveries, decisions, errors, and patterns worth remembering. Triggers on "tag this", "remember this", "save learning".
 allowed-tools: Bash, Write, Read
 ---
 
@@ -10,7 +10,7 @@ This skill enables explicit capture of learnings to the continuous-claude blockc
 
 ## When to Capture
 
-### Discoveries (🔍)
+### Discoveries
 - Finding out how a system works
 - Discovering undocumented API behavior
 - Learning about codebase architecture
@@ -21,7 +21,7 @@ This skill enables explicit capture of learnings to the continuous-claude blockc
 - "It turns out..."
 - "The system actually..."
 
-### Decisions (⚖️)
+### Decisions
 - Choosing a technology or approach
 - Making architectural decisions
 - Selecting patterns or conventions
@@ -32,7 +32,7 @@ This skill enables explicit capture of learnings to the continuous-claude blockc
 - "Going with X because..."
 - "Chose this approach since..."
 
-### Errors (⚠️)
+### Errors
 - Mistakes made and how to avoid them
 - Gotchas and edge cases
 - Failed approaches
@@ -43,7 +43,7 @@ This skill enables explicit capture of learnings to the continuous-claude blockc
 - "Watch out for..."
 - "This doesn't work when..."
 
-### Patterns (🔄)
+### Patterns
 - Reusable code patterns
 - Naming conventions
 - File organization strategies
@@ -70,7 +70,7 @@ Use these tags in your responses to mark learnings:
 Use the learn command to explicitly capture:
 
 ```bash
-cd ~/projects/continuous-claude-custom && uv run python -c "
+uv run python -c "
 import json
 import hashlib
 from datetime import datetime
@@ -127,7 +127,7 @@ index_file.write_text(json.dumps(index, indent=2))
 reinforcements['learnings'][learning['id']] = {'category': CATEGORY, 'confidence': 0.6, 'outcome_count': 0, 'last_updated': datetime.utcnow().isoformat()}
 reinforcements_file.write_text(json.dumps(reinforcements, indent=2))
 
-print(f'✓ Captured: {learning[\"id\"][:8]} [{CATEGORY}]')
+print(f'Captured: {learning[\"id\"][:8]} [{CATEGORY}]')
 "
 ```
 
@@ -149,7 +149,7 @@ Good learnings are:
 After applying a learning, record the outcome to adjust confidence:
 
 ```bash
-cd ~/projects/continuous-claude-custom && uv run cclaude outcome <id> -r success -c "Applied in auth refactor"
+uv run cclaude outcome <id> -r success -c "Applied in auth refactor"
 ```
 
 Outcomes affect confidence:
