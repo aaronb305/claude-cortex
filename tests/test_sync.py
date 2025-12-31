@@ -5,8 +5,8 @@ import tarfile
 import pytest
 from pathlib import Path
 
-from continuous_claude.ledger import Ledger, Learning, LearningCategory
-from continuous_claude.sync import (
+from claude_cortex.ledger import Ledger, Learning, LearningCategory
+from claude_cortex.sync import (
     LedgerSync,
     SyncStatus,
     SyncResult,

@@ -2,7 +2,7 @@
 
 import pytest
 
-from continuous_claude.search import SemanticIndex, semantic_available
+from claude_cortex.search import SemanticIndex, semantic_available
 
 
 class TestSemanticAvailability:

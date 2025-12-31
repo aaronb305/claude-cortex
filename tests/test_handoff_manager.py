@@ -7,8 +7,8 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from continuous_claude.handoff.manager import HandoffManager
-from continuous_claude.handoff.models import Handoff
+from claude_cortex.handoff.manager import HandoffManager
+from claude_cortex.handoff.models import Handoff
 
 
 class TestHandoffCreation:
@@ -71,7 +71,7 @@ class TestHandoffCreation:
 
         assert handoff.context_notes == ""
 
-    @patch("continuous_claude.handoff.manager.HandoffManager._get_modified_files")
+    @patch("claude_cortex.handoff.manager.HandoffManager._get_modified_files")
     def test_create_handoff_captures_modified_files(self, mock_get_modified, project_dir):
         """Should capture modified files from git."""
         mock_get_modified.return_value = ["file1.py", "file2.py"]
@@ -278,7 +278,7 @@ class TestGitIntegration:
             "?? untracked.txt\n",
         ])
 
-        with patch("continuous_claude.handoff.manager.subprocess.run", return_value=mock_result) as mock_run:
+        with patch("claude_cortex.handoff.manager.subprocess.run", return_value=mock_result) as mock_run:
             files = manager._get_modified_files()
 
         assert "file1.py" in files
@@ -293,7 +293,7 @@ class TestGitIntegration:
         mock_result = MagicMock()
         mock_result.returncode = 128  # git error code for not a repository
 
-        with patch("continuous_claude.handoff.manager.subprocess.run", return_value=mock_result):
+        with patch("claude_cortex.handoff.manager.subprocess.run", return_value=mock_result):
             files = manager._get_modified_files()
 
         assert files == []
@@ -306,7 +306,7 @@ class TestGitIntegration:
         mock_result.returncode = 0
         mock_result.stdout = "R  old_name.py -> new_name.py\n"
 
-        with patch("continuous_claude.handoff.manager.subprocess.run", return_value=mock_result):
+        with patch("claude_cortex.handoff.manager.subprocess.run", return_value=mock_result):
             files = manager._get_modified_files()
 
         assert "new_name.py" in files
@@ -316,7 +316,7 @@ class TestGitIntegration:
         """Should return empty list on git timeout."""
         manager = HandoffManager(project_dir)
 
-        with patch("continuous_claude.handoff.manager.subprocess.run", side_effect=subprocess.TimeoutExpired("git", 10)):
+        with patch("claude_cortex.handoff.manager.subprocess.run", side_effect=subprocess.TimeoutExpired("git", 10)):
             files = manager._get_modified_files()
 
         assert files == []
@@ -325,7 +325,7 @@ class TestGitIntegration:
         """Should return empty list when git is not installed."""
         manager = HandoffManager(project_dir)
 
-        with patch("continuous_claude.handoff.manager.subprocess.run", side_effect=FileNotFoundError()):
+        with patch("claude_cortex.handoff.manager.subprocess.run", side_effect=FileNotFoundError()):
             files = manager._get_modified_files()
 
         assert files == []

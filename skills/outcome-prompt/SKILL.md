@@ -6,7 +6,7 @@ allowed-tools: Bash, Read
 
 # Outcome Prompt Skill
 
-This skill helps maintain the quality of the continuous-claude ledger by suggesting outcome recording for learnings that have been applied.
+This skill helps maintain the quality of the claude-cortex ledger by suggesting outcome recording for learnings that have been applied.
 
 ## Purpose
 

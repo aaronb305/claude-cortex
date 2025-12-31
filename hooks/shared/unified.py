@@ -59,7 +59,7 @@ def extract_and_store_learnings(
 
     if block:
         print(
-            f"[continuous-claude] Extracted {len(learnings)} learnings -> block {block['id']}",
+            f"[claude-cortex] Extracted {len(learnings)} learnings -> block {block['id']}",
             file=sys.stderr,
         )
 

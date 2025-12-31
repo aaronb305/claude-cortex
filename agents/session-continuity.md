@@ -5,7 +5,7 @@ tools: Bash, Read, Write
 model: sonnet
 ---
 
-You are a session continuity manager for the continuous-claude system. Your role is to ensure smooth transitions between sessions by managing handoffs and restoring context.
+You are a session continuity manager for the claude-cortex system. Your role is to ensure smooth transitions between sessions by managing handoffs and restoring context.
 
 ## Core Responsibilities
 

@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch, MagicMock
 import json
 import tempfile
 
-from continuous_claude.runner.stop_conditions import (
+from claude_cortex.runner.stop_conditions import (
     StopCondition,
     IterationLimit,
     CostLimit,
@@ -16,9 +16,9 @@ from continuous_claude.runner.stop_conditions import (
     ConfidenceThreshold,
     CompositeStopCondition,
 )
-from continuous_claude.runner.context import ContextBuilder
-from continuous_claude.runner.loop import Runner
-from continuous_claude.ledger import Ledger, Learning, LearningCategory
+from claude_cortex.runner.context import ContextBuilder
+from claude_cortex.runner.loop import Runner
+from claude_cortex.ledger import Ledger, Learning, LearningCategory
 
 
 class TestIterationLimit:
@@ -781,7 +781,7 @@ class TestRunnerPromptInjection:
 class TestRunnerClaudeExecution:
     """Tests for Runner._run_claude method (mocked)."""
 
-    @patch("continuous_claude.runner.loop.subprocess.run")
+    @patch("claude_cortex.runner.loop.subprocess.run")
     def test_run_claude_success(self, mock_run, project_dir, ledger_path):
         """Should handle successful Claude CLI execution."""
         ledger = Ledger(ledger_path)
@@ -803,7 +803,7 @@ class TestRunnerClaudeExecution:
         assert "Task completed" in result["output"]
         assert result["cost"] == 0.05
 
-    @patch("continuous_claude.runner.loop.subprocess.run")
+    @patch("claude_cortex.runner.loop.subprocess.run")
     def test_run_claude_failure(self, mock_run, project_dir, ledger_path):
         """Should handle Claude CLI failure."""
         ledger = Ledger(ledger_path)
@@ -821,7 +821,7 @@ class TestRunnerClaudeExecution:
         assert "rate limit" in result["output"].lower()
         assert result["cost"] == 0.0
 
-    @patch("continuous_claude.runner.loop.subprocess.run")
+    @patch("claude_cortex.runner.loop.subprocess.run")
     def test_run_claude_timeout(self, mock_run, project_dir, ledger_path):
         """Should handle timeout during Claude CLI execution."""
         import subprocess
@@ -836,7 +836,7 @@ class TestRunnerClaudeExecution:
         assert result["success"] is False
         assert "timeout" in result["output"].lower()
 
-    @patch("continuous_claude.runner.loop.subprocess.run")
+    @patch("claude_cortex.runner.loop.subprocess.run")
     def test_run_claude_json_decode_error(self, mock_run, project_dir, ledger_path):
         """Should handle non-JSON output from Claude CLI."""
         ledger = Ledger(ledger_path)
@@ -858,8 +858,8 @@ class TestRunnerClaudeExecution:
 class TestRunnerRun:
     """Tests for Runner.run method (integration-like tests with mocks)."""
 
-    @patch("continuous_claude.runner.loop.subprocess.run")
-    @patch("continuous_claude.runner.loop.console")
+    @patch("claude_cortex.runner.loop.subprocess.run")
+    @patch("claude_cortex.runner.loop.console")
     def test_run_stops_at_iteration_limit(self, mock_console, mock_run, project_dir, ledger_path):
         """Should stop when iteration limit is reached."""
         ledger = Ledger(ledger_path)
@@ -879,8 +879,8 @@ class TestRunnerRun:
 
         assert result["iterations"] == 2
 
-    @patch("continuous_claude.runner.loop.subprocess.run")
-    @patch("continuous_claude.runner.loop.console")
+    @patch("claude_cortex.runner.loop.subprocess.run")
+    @patch("claude_cortex.runner.loop.console")
     def test_run_extracts_and_stores_learnings(self, mock_console, mock_run, project_dir, ledger_path):
         """Should extract learnings and store them in ledger."""
         ledger = Ledger(ledger_path)
@@ -905,8 +905,8 @@ class TestRunnerRun:
         blocks = ledger.get_all_blocks()
         assert len(blocks) >= 1
 
-    @patch("continuous_claude.runner.loop.subprocess.run")
-    @patch("continuous_claude.runner.loop.console")
+    @patch("claude_cortex.runner.loop.subprocess.run")
+    @patch("claude_cortex.runner.loop.console")
     def test_run_accumulates_cost(self, mock_console, mock_run, project_dir, ledger_path):
         """Should accumulate cost across iterations."""
         ledger = Ledger(ledger_path)
@@ -927,8 +927,8 @@ class TestRunnerRun:
         # 3 iterations * $0.10 each = $0.30
         assert result["cost"] == pytest.approx(0.30, abs=0.01)
 
-    @patch("continuous_claude.runner.loop.subprocess.run")
-    @patch("continuous_claude.runner.loop.console")
+    @patch("claude_cortex.runner.loop.subprocess.run")
+    @patch("claude_cortex.runner.loop.console")
     def test_run_continues_on_failed_iteration(self, mock_console, mock_run, project_dir, ledger_path):
         """Should continue to next iteration when one fails."""
         ledger = Ledger(ledger_path)
@@ -949,8 +949,8 @@ class TestRunnerRun:
 
         assert result["iterations"] == 3
 
-    @patch("continuous_claude.runner.loop.subprocess.run")
-    @patch("continuous_claude.runner.loop.console")
+    @patch("claude_cortex.runner.loop.subprocess.run")
+    @patch("claude_cortex.runner.loop.console")
     def test_run_records_session_id(self, mock_console, mock_run, project_dir, ledger_path):
         """Should include session_id in result."""
         ledger = Ledger(ledger_path)

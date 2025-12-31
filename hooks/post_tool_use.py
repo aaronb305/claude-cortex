@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PostToolUse hook for continuous-claude-custom.
+PostToolUse hook for claude-cortex.
 
 Nudges Claude to continue working when there are remaining tasks.
 Activates after TodoWrite, Edit, or Write tool uses to encourage
@@ -248,7 +248,7 @@ def main():
             track_learning_references(tool_input, cwd, session_id)
     except Exception as e:
         # Log error but don't fail the hook
-        print(f"[continuous-claude] PostToolUse: Learning tracking error: {e}", file=sys.stderr)
+        print(f"[claude-cortex] PostToolUse: Learning tracking error: {e}", file=sys.stderr)
 
     # Only process nudge messages for relevant tools
     relevant_tools = {"TodoWrite", "Edit", "Write"}

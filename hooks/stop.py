@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Stop hook for continuous-claude-custom.
+Stop hook for claude-cortex.
 
 Detects significant work patterns in Claude's response and nudges for
 immediate learning tagging. This is part of the hybrid learning capture

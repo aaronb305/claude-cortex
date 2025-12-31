@@ -6,7 +6,7 @@ import stat
 from pathlib import Path
 from unittest.mock import patch
 
-from continuous_claude.ledger.crypto import (
+from claude_cortex.ledger.crypto import (
     is_crypto_available,
     CRYPTO_AVAILABLE,
     Identity,
@@ -659,7 +659,7 @@ class TestGracefulDegradation:
         """Sign should raise RuntimeError when crypto unavailable."""
         manager = KeyManager(ledger_path)
 
-        with patch("continuous_claude.ledger.crypto.CRYPTO_AVAILABLE", False):
+        with patch("claude_cortex.ledger.crypto.CRYPTO_AVAILABLE", False):
             with pytest.raises(RuntimeError, match="cryptography package not installed"):
                 manager.sign("test data")
 
@@ -672,7 +672,7 @@ class TestGracefulDegradation:
         manager = KeyManager(ledger_path)
         identity = Identity(name="Test", machine="test")
 
-        with patch("continuous_claude.ledger.crypto.CRYPTO_AVAILABLE", False):
+        with patch("claude_cortex.ledger.crypto.CRYPTO_AVAILABLE", False):
             with pytest.raises(RuntimeError, match="cryptography package not installed"):
                 manager.generate_keypair(identity)
 
@@ -684,7 +684,7 @@ class TestGracefulDegradation:
         """Verify should return UNSIGNED when crypto unavailable."""
         manager = KeyManager(ledger_path)
 
-        with patch("continuous_claude.ledger.crypto.CRYPTO_AVAILABLE", False):
+        with patch("claude_cortex.ledger.crypto.CRYPTO_AVAILABLE", False):
             result = manager.verify("data", "sig", "key_id")
             assert result == VerifyResult.UNSIGNED
 
@@ -696,7 +696,7 @@ class TestGracefulDegradation:
         """sign_block_hash should return None when crypto unavailable."""
         manager = KeyManager(ledger_path)
 
-        with patch("continuous_claude.ledger.crypto.CRYPTO_AVAILABLE", False):
+        with patch("claude_cortex.ledger.crypto.CRYPTO_AVAILABLE", False):
             result = sign_block_hash("hash", manager)
             assert result is None
 
@@ -710,7 +710,7 @@ class TestGracefulDegradation:
 
         block = {"hash": "abc", "signature": {"author_key_id": "KEY", "signature": "sig"}}
 
-        with patch("continuous_claude.ledger.crypto.CRYPTO_AVAILABLE", False):
+        with patch("claude_cortex.ledger.crypto.CRYPTO_AVAILABLE", False):
             result = verify_block_signature(block, manager)
             assert result == VerifyResult.UNSIGNED
 

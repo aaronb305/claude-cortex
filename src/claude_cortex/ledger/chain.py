@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from ..search.index import SearchResult
     from .crypto import KeyManager, VerifyResult
 
-logger = logging.getLogger("continuous_claude.ledger")
+logger = logging.getLogger("claude_cortex.ledger")
 
 
 @contextmanager

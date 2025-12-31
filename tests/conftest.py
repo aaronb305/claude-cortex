@@ -1,4 +1,4 @@
-"""Pytest fixtures for continuous-claude-custom tests."""
+"""Pytest fixtures for claude-cortex tests."""
 
 import pytest
 from pathlib import Path

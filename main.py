@@ -1,5 +1,5 @@
 def main():
-    print("Hello from continuous-claude-custom!")
+    print("Hello from claude-cortex!")
 
 
 if __name__ == "__main__":

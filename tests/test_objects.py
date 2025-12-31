@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from continuous_claude.ledger.objects import ObjectStore, compute_content_hash
+from claude_cortex.ledger.objects import ObjectStore, compute_content_hash
 
 
 class TestComputeContentHash:

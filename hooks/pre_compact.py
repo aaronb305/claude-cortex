@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PreCompact hook for continuous-claude-custom.
+PreCompact hook for claude-cortex.
 
 Extracts learnings from the conversation BEFORE compaction happens,
 ensuring no learnings are lost when the context gets summarized.
@@ -252,10 +252,10 @@ def main():
         )
 
         if handoff_path:
-            print(f"[continuous-claude] PreCompact: Saved handoff -> {handoff_path}", file=sys.stderr)
+            print(f"[claude-cortex] PreCompact: Saved handoff -> {handoff_path}", file=sys.stderr)
             messages.append(f"Saved handoff with {len(modified_files)} modified files.")
     except Exception as e:
-        print(f"[continuous-claude] PreCompact: Failed to save handoff: {e}", file=sys.stderr)
+        print(f"[claude-cortex] PreCompact: Failed to save handoff: {e}", file=sys.stderr)
 
     # Save summary before compaction
     try:
@@ -276,10 +276,10 @@ def main():
         )
 
         if summary_path:
-            print(f"[continuous-claude] PreCompact: Saved summary -> {summary_path}", file=sys.stderr)
+            print(f"[claude-cortex] PreCompact: Saved summary -> {summary_path}", file=sys.stderr)
             messages.append(f"Saved summary with {len(key_decisions)} decisions and {len(files_discussed)} files.")
     except Exception as e:
-        print(f"[continuous-claude] PreCompact: Failed to save summary: {e}", file=sys.stderr)
+        print(f"[claude-cortex] PreCompact: Failed to save summary: {e}", file=sys.stderr)
 
     # Combine messages for output
     status_msg = " ".join(messages) if messages else ""

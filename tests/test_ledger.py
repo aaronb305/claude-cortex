@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from continuous_claude.ledger import Ledger, Learning, LearningCategory, compute_content_hash
+from claude_cortex.ledger import Ledger, Learning, LearningCategory, compute_content_hash
 
 
 class TestLedgerAppendBlock:

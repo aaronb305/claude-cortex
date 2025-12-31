@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Shared utilities for continuous-claude-custom hooks.
+Shared utilities for claude-cortex hooks.
 
 This module consolidates all duplicated code from the hooks to provide
 a single source of truth for common operations like ledger access,

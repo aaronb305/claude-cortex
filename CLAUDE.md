@@ -1,4 +1,4 @@
-# Continuous Claude Custom
+# Claude Cortex
 
 Blockchain-style ledger memory with performance-based reinforcement for Claude Code.
 
@@ -6,11 +6,11 @@ Blockchain-style ledger memory with performance-based reinforcement for Claude C
 
 ```bash
 # Install from local directory
-cd ~/projects/continuous-claude-custom
+cd ~/projects/claude-cortex
 ./install.sh
 
 # Or install plugin from local marketplace
-claude plugin install continuous-claude@continuous-claude-custom --scope user
+claude plugin install claude-cortex@claude-cortex --scope user
 ```
 
 This will:
@@ -56,7 +56,7 @@ uv sync --extra all
 uv add sentence-transformers sqlite-vec
 
 # Verify installation
-uv run python -c "from continuous_claude.search.semantic import is_available; print(is_available())"
+uv run python -c "from claude_cortex.search.semantic import is_available; print(is_available())"
 ```
 
 ## Usage
@@ -399,7 +399,7 @@ project/.claude/
 │   └── <session>/insights-<timestamp>.json
 └── session_learnings.json     # Learnings referenced in current session
 
-~/projects/continuous-claude-custom/
+~/projects/claude-cortex/
 ├── .claude-plugin/            # Plugin manifest
 ├── agents/                    # Custom agents (12 total)
 ├── skills/                    # Skills (5)
@@ -411,7 +411,7 @@ project/.claude/
 │   ├── post_tool_use.py       # Continuation nudges + learning tracking
 │   ├── subagent_stop.py       # Agent deployment tracking + effectiveness
 │   └── stop.py                # Learning tagging nudges
-├── src/continuous_claude/     # Python package
+├── src/claude_cortex/         # Python package
 │   ├── ledger/                # Blockchain implementation
 │   │   ├── chain.py           # Ledger management + search integration
 │   │   ├── models.py          # Learning, Block, Outcome models

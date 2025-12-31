@@ -32,7 +32,7 @@ def file_lock(path: Path, exclusive: bool = True):
         fcntl.flock(lock_file.fileno(), lock_type)
         elapsed = time.time() - start
         if elapsed > 1.0:
-            print(f"[continuous-claude] Lock on {path} took {elapsed:.2f}s", file=sys.stderr)
+            print(f"[claude-cortex] Lock on {path} took {elapsed:.2f}s", file=sys.stderr)
         yield lock_file
     finally:
         try:

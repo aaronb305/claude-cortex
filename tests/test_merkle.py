@@ -4,7 +4,7 @@ import json
 import pytest
 from pathlib import Path
 
-from continuous_claude.ledger.merkle import MerkleTree, MerkleNode, EMPTY_HASH
+from claude_cortex.ledger.merkle import MerkleTree, MerkleNode, EMPTY_HASH
 
 
 class TestMerkleTreeEmpty:

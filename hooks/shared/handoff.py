@@ -96,7 +96,7 @@ def save_handoff(
 
         return file_path
     except Exception as e:
-        print(f"[continuous-claude] Warning: Failed to save handoff: {e}", file=sys.stderr)
+        print(f"[claude-cortex] Warning: Failed to save handoff: {e}", file=sys.stderr)
         return None
 
 
@@ -129,7 +129,7 @@ def load_latest_handoff(project_dir: Path) -> Optional[dict]:
             if handoff:
                 return handoff
         except Exception as e:
-            print(f"[continuous-claude] Warning: Failed to parse handoff {handoff_file}: {e}", file=sys.stderr)
+            print(f"[claude-cortex] Warning: Failed to parse handoff {handoff_file}: {e}", file=sys.stderr)
             continue
 
     return None
@@ -207,7 +207,7 @@ def parse_handoff_markdown(content: str) -> Optional[dict]:
         }
 
     except Exception as e:
-        print(f"[continuous-claude] Warning: Failed to parse handoff markdown: {e}", file=sys.stderr)
+        print(f"[claude-cortex] Warning: Failed to parse handoff markdown: {e}", file=sys.stderr)
         return None
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SessionStart hook for continuous-claude-custom.
+SessionStart hook for claude-cortex.
 
 Injects ledger context into Claude sessions by reading high-confidence
 learnings from both global and project ledgers.
@@ -180,8 +180,8 @@ def get_cross_project_suggestions(project_dir: Path, limit: int = 3) -> str:
         if str(src_path) not in sys.path:
             sys.path.insert(0, str(src_path))
 
-        from continuous_claude.suggestions import LearningRecommender
-        from continuous_claude.ledger import Ledger
+        from claude_cortex.suggestions import LearningRecommender
+        from claude_cortex.ledger import Ledger
 
         global_ledger_path = Path.home() / ".claude" / "ledger"
         if not global_ledger_path.exists():
@@ -225,7 +225,7 @@ def get_cross_project_suggestions(project_dir: Path, limit: int = 3) -> str:
 
     except Exception as e:
         # Don't fail hook if suggestion system has issues, but log the error
-        print(f"[continuous-claude] SessionStart: Suggestion system error: {e}", file=sys.stderr)
+        print(f"[claude-cortex] SessionStart: Suggestion system error: {e}", file=sys.stderr)
         return ""
 
 

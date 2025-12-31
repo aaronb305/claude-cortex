@@ -6,7 +6,7 @@ allowed-tools: Bash, Read
 
 # Ledger Knowledge Skill
 
-This skill provides access to the continuous-claude knowledge ledger, enabling retrieval of learnings from previous sessions.
+This skill provides access to the claude-cortex knowledge ledger, enabling retrieval of learnings from previous sessions.
 
 ## Ledger Locations
 

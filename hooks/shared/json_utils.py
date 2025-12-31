@@ -51,7 +51,7 @@ def read_json_locked(path: Path) -> dict:
         with file_lock(path, exclusive=False):
             return read_json(path)
     except Exception as e:
-        print(f"[continuous-claude] Warning: Failed to read {path}: {e}", file=sys.stderr)
+        print(f"[claude-cortex] Warning: Failed to read {path}: {e}", file=sys.stderr)
         return {}
 
 

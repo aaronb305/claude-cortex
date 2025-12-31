@@ -6,7 +6,7 @@ allowed-tools: Bash, Read
 
 # Search Learnings Skill
 
-The continuous-claude system includes SQLite FTS5 full-text search for fast, relevance-ranked queries across all learnings.
+The claude-cortex system includes SQLite FTS5 full-text search for fast, relevance-ranked queries across all learnings.
 
 ## Basic Search
 

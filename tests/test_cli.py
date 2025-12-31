@@ -5,9 +5,9 @@ import pytest
 from pathlib import Path
 from click.testing import CliRunner
 
-from continuous_claude.cli import main
-from continuous_claude.ledger import Ledger, Learning, LearningCategory
-from continuous_claude.search import SearchIndex
+from claude_cortex.cli import main
+from claude_cortex.ledger import Ledger, Learning, LearningCategory
+from claude_cortex.search import SearchIndex
 
 
 @pytest.fixture
@@ -93,7 +93,7 @@ class TestListCommand:
 
         # Patch get_global_ledger to return our test ledger
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: Ledger(ledger_path)
         )
 
@@ -107,7 +107,7 @@ class TestListCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -124,7 +124,7 @@ class TestListCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -143,7 +143,7 @@ class TestListCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -161,7 +161,7 @@ class TestListCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -177,7 +177,7 @@ class TestListCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -196,7 +196,7 @@ class TestShowCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -213,7 +213,7 @@ class TestShowCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -230,7 +230,7 @@ class TestShowCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -244,7 +244,7 @@ class TestShowCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -329,7 +329,7 @@ class TestOutcomeCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -347,7 +347,7 @@ class TestOutcomeCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -365,7 +365,7 @@ class TestOutcomeCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -383,7 +383,7 @@ class TestOutcomeCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -400,7 +400,7 @@ class TestOutcomeCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -420,7 +420,7 @@ class TestOutcomeCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -449,7 +449,7 @@ class TestVerifyCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -464,7 +464,7 @@ class TestVerifyCommand:
         ledger = Ledger(ledger_path)
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -478,7 +478,7 @@ class TestVerifyCommand:
         ledger, learnings = ledger_with_learnings
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -507,7 +507,7 @@ class TestVerifyCommand:
                 json.dump(block_data, f)
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: Ledger(ledger.path)
         )
 
@@ -555,11 +555,11 @@ class TestPromoteCommand:
         global_ledger = Ledger(ledger_path, is_global=True)
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_project_ledger",
+            "claude_cortex.cli.get_project_ledger",
             lambda p: project_ledger
         )
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: global_ledger
         )
 
@@ -585,7 +585,7 @@ class TestReindexCommand:
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 
@@ -602,7 +602,7 @@ class TestReindexCommand:
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         monkeypatch.setattr(
-            "continuous_claude.cli.get_global_ledger",
+            "claude_cortex.cli.get_global_ledger",
             lambda: ledger
         )
 

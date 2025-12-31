@@ -1,4 +1,4 @@
-# Continuous Claude Custom
+# Claude Cortex
 
 A blockchain-style ledger memory system with performance-based reinforcement learning for Claude Code. This plugin enables persistent knowledge capture across sessions with confidence scoring, autonomous execution capabilities, and cross-project knowledge transfer.
 
@@ -34,7 +34,7 @@ A blockchain-style ledger memory system with performance-based reinforcement lea
 ### Quick Install
 
 ```bash
-cd ~/projects/continuous-claude-custom
+cd ~/projects/claude-cortex
 ./install.sh
 ```
 
@@ -48,10 +48,10 @@ This will:
 
 ```bash
 # Load plugin for testing (temporary)
-claude --plugin-dir ~/projects/continuous-claude-custom
+claude --plugin-dir ~/projects/claude-cortex
 
 # Or install permanently from local marketplace
-claude plugin install continuous-claude@continuous-claude-custom --scope user
+claude plugin install claude-cortex@claude-cortex --scope user
 ```
 
 ### Manual Setup
@@ -214,12 +214,12 @@ project/.claude/
 └── insights/                  # LLM-powered analysis results
     └── <session>/insights-<timestamp>.json
 
-~/projects/continuous-claude-custom/
+~/projects/claude-cortex/
 ├── .claude-plugin/plugin.json # Plugin manifest
 ├── agents/                    # Custom agents (11 total, opus model)
 ├── skills/                    # User-invocable skills (6)
 ├── hooks/                     # Hook implementations
-├── src/continuous_claude/     # Python package
+├── src/claude_cortex/         # Python package
 │   ├── ledger/                # Blockchain ledger implementation
 │   │   ├── chain.py           # Ledger management + search integration
 │   │   ├── models.py          # Learning, Block, Outcome models
@@ -325,7 +325,7 @@ uv run cclaude --help
 
 ## Comparison with Similar Systems
 
-| Feature | Continuous Claude Custom | Other Systems |
+| Feature | Claude Cortex | Other Systems |
 |---------|-------------------------|---------------|
 | Data integrity | SHA-256 blockchain + Merkle tree | None |
 | Cryptographic signing | Ed25519 with trust levels | None |
@@ -339,6 +339,10 @@ uv run cclaude --help
 | Full-text search | SQLite FTS5 | Limited |
 | Sync/export | Archive-based transfer | None |
 | Session analysis | LLM-powered insights | None |
+
+## Acknowledgements
+
+This project was inspired by [Continuous-Claude-v2](https://github.com/parcadei/Continuous-Claude-v2) by parcadei, which pioneered the concept of continuous autonomous Claude sessions with persistent memory.
 
 ## License
 

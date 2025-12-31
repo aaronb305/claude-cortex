@@ -1,5 +1,5 @@
 {
-  "name": "continuous-claude-custom",
+  "name": "claude-cortex",
   "version": "0.1.0",
   "description": "Blockchain-style ledger memory with performance-based reinforcement for Claude Code",
   "owner": {
@@ -7,7 +7,7 @@
   },
   "plugins": [
     {
-      "name": "continuous-claude",
+      "name": "claude-cortex",
       "version": "0.1.0",
       "description": "Blockchain-style ledger memory with performance-based reinforcement. Provides persistent knowledge across sessions, continuous iteration mode, and learning extraction.",
       "source": "./",

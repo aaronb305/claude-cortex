@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from continuous_claude.search import SearchIndex
+from claude_cortex.search import SearchIndex
 
 
 class TestSearchIndexIndexLearning:

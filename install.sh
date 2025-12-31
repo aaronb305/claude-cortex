@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Continuous Claude Custom - Installation Script
+# Claude Cortex - Installation Script
 # Blockchain-style ledger memory with performance-based reinforcement
 #
 
@@ -225,7 +225,7 @@ configure_settings() {
 
     if echo "$current_settings" | jq -e '.hooks' > /dev/null 2>&1; then
         print_warning "Hooks already configured in settings.json"
-        print_warning "Please manually add continuous-claude-custom hooks if needed"
+        print_warning "Please manually add claude-cortex hooks if needed"
         print_warning "See: $HOOKS_DIR for hook scripts"
     else
         echo "$current_settings" | jq ". + $hooks_config" > "$SETTINGS_FILE"
@@ -306,7 +306,7 @@ print_usage() {
 main() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║        Continuous Claude Custom - Installation               ║"
+    echo "║              Claude Cortex - Installation                    ║"
     echo "║   Blockchain-style ledger memory with reinforcement          ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""

@@ -4,8 +4,8 @@ import pytest
 from pathlib import Path
 import json
 
-from continuous_claude.ledger import Ledger, Learning, LearningCategory, ProjectContext
-from continuous_claude.suggestions.recommender import (
+from claude_cortex.ledger import Ledger, Learning, LearningCategory, ProjectContext
+from claude_cortex.suggestions.recommender import (
     LearningRecommender,
     ProjectAnalysis,
     Suggestion,

@@ -136,7 +136,7 @@ uv run cclaude handoff create \
 ## Stopping Conditions
 
 Stop when:
-- All tasks complete (signal: `CONTINUOUS_CLAUDE_PROJECT_COMPLETE`)
+- All tasks complete (signal: `CLAUDE_CORTEX_PROJECT_COMPLETE`)
 - Maximum iterations reached
 - Blocked on external dependency
 - User explicitly requests stop

@@ -36,7 +36,7 @@ def _init_package_imports():
         if _src_path.exists() and str(_src_path) not in sys.path:
             sys.path.insert(0, str(_src_path))
 
-        from continuous_claude.search import SearchIndex
+        from claude_cortex.search import SearchIndex
         _SearchIndex = SearchIndex
         _PACKAGE_AVAILABLE = True
     except ImportError:
@@ -149,7 +149,7 @@ def index_learnings_to_search(ledger_path: Path, learnings: list[dict]) -> None:
             index.close()
     except Exception as e:
         # Don't fail block creation if indexing fails, but log warning
-        print(f"[continuous-claude] Warning: Search indexing failed: {e}", file=sys.stderr)
+        print(f"[claude-cortex] Warning: Search indexing failed: {e}", file=sys.stderr)
 
 
 # -----------------------------------------------------------------------------
@@ -306,7 +306,7 @@ def get_learning_content(ledger_path: Path, learning_id: str) -> Optional[str]:
                 if learning.get("id") == learning_id:
                     return learning.get("content")
         except Exception as e:
-            print(f"[continuous-claude] Warning: Failed to read block {block_file}: {e}", file=sys.stderr)
+            print(f"[claude-cortex] Warning: Failed to read block {block_file}: {e}", file=sys.stderr)
             continue
 
     return None

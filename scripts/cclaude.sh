@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# cclaude - Continuous Claude Custom wrapper
+# cclaude - Claude Cortex wrapper
 # Blockchain-style ledger memory with performance-based reinforcement
 #
 
@@ -395,7 +395,7 @@ run_iteration() {
             git add -A
             git commit -m "chore: iteration $iteration progress
 
-🤖 Generated with continuous-claude-custom" || true
+🤖 Generated with claude-cortex" || true
         fi
     fi
 
@@ -412,7 +412,7 @@ run_continuous() {
     local total_learnings=0
 
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║        Continuous Claude Custom - Starting                   ║${NC}"
+    echo -e "${CYAN}║              Claude Cortex - Starting                        ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${BLUE}Prompt:${NC} $PROMPT"
@@ -484,7 +484,7 @@ run_continuous() {
     # Show ledger stats
     echo ""
     echo -e "${BLUE}Ledger Status:${NC}"
-    cd "$PROJECT_ROOT" && uv run cclaude verify 2>/dev/null || python3 -m continuous_claude.cli verify 2>/dev/null || echo "  (run 'cclaude verify' to check)"
+    cd "$PROJECT_ROOT" && uv run cclaude verify 2>/dev/null || python3 -m claude_cortex.cli verify 2>/dev/null || echo "  (run 'cclaude verify' to check)"
 }
 
 # Command handlers
@@ -544,23 +544,23 @@ cmd_run() {
 }
 
 cmd_list() {
-    cd "$PROJECT_ROOT" && uv run python -m continuous_claude.cli list "$@"
+    cd "$PROJECT_ROOT" && uv run python -m claude_cortex.cli list "$@"
 }
 
 cmd_show() {
-    cd "$PROJECT_ROOT" && uv run python -m continuous_claude.cli show "$@"
+    cd "$PROJECT_ROOT" && uv run python -m claude_cortex.cli show "$@"
 }
 
 cmd_outcome() {
-    cd "$PROJECT_ROOT" && uv run python -m continuous_claude.cli outcome "$@"
+    cd "$PROJECT_ROOT" && uv run python -m claude_cortex.cli outcome "$@"
 }
 
 cmd_promote() {
-    cd "$PROJECT_ROOT" && uv run python -m continuous_claude.cli promote "$@"
+    cd "$PROJECT_ROOT" && uv run python -m claude_cortex.cli promote "$@"
 }
 
 cmd_verify() {
-    cd "$PROJECT_ROOT" && uv run python -m continuous_claude.cli verify "$@"
+    cd "$PROJECT_ROOT" && uv run python -m claude_cortex.cli verify "$@"
 }
 
 main() {

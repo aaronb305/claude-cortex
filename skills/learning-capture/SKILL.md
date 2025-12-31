@@ -6,7 +6,7 @@ allowed-tools: Bash, Write, Read
 
 # Learning Capture Skill
 
-This skill enables explicit capture of learnings to the continuous-claude blockchain ledger, ensuring valuable insights persist across sessions.
+This skill enables explicit capture of learnings to the claude-cortex blockchain ledger, ensuring valuable insights persist across sessions.
 
 ## When to Capture
 

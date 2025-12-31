@@ -7,8 +7,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from continuous_claude.summaries.manager import SummaryManager
-from continuous_claude.summaries.models import Summary
+from claude_cortex.summaries.manager import SummaryManager
+from claude_cortex.summaries.models import Summary
 
 
 class TestSummaryCreation:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SessionEnd hook for continuous-claude-custom.
+SessionEnd hook for claude-cortex.
 
 Extracts learnings from the session transcript and stores them in the ledger.
 """

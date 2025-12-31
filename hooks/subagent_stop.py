@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SubagentStop hook for continuous-claude-custom.
+SubagentStop hook for claude-cortex.
 
 Tracks agent deployments and their effectiveness when subagents (Task tool calls)
 finish. This enables:
@@ -318,7 +318,7 @@ def update_handoff_with_agent_completion(
     # This is a lightweight update - just log to stderr for now
     # A full implementation would update the handoff file
     print(
-        f"[continuous-claude] Agent completed: {agent_name} "
+        f"[claude-cortex] Agent completed: {agent_name} "
         f"(effectiveness: {effectiveness})",
         file=sys.stderr,
     )
@@ -372,7 +372,7 @@ def main():
         learnings = extract_and_log_learnings(output, agent_name)
         if learnings:
             print(
-                f"[continuous-claude] SubagentStop: Found {len(learnings)} "
+                f"[claude-cortex] SubagentStop: Found {len(learnings)} "
                 f"learnings from {agent_name}",
                 file=sys.stderr,
             )
@@ -390,7 +390,7 @@ def main():
 
     # Output for verbose mode
     print(
-        f"[continuous-claude] SubagentStop: {agent_name} completed "
+        f"[claude-cortex] SubagentStop: {agent_name} completed "
         f"(effectiveness: {effectiveness})",
         file=sys.stderr,
     )

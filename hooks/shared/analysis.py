@@ -27,7 +27,7 @@ def _init_analysis_imports():
         if _src_path.exists() and str(_src_path) not in sys.path:
             sys.path.insert(0, str(_src_path))
 
-        from continuous_claude.analysis import TranscriptAnalyzer, SessionInsights
+        from claude_cortex.analysis import TranscriptAnalyzer, SessionInsights
         _TranscriptAnalyzer = TranscriptAnalyzer
         _SessionInsights = SessionInsights
         _ANALYSIS_AVAILABLE = True
@@ -82,12 +82,12 @@ def analyze_session(
         # Save insights if requested
         if save_insights and project_dir:
             insights_dir = project_dir / ".claude" / "insights" / session_id
-            from continuous_claude.analysis.transcript import save_insights as _save
+            from claude_cortex.analysis.transcript import save_insights as _save
             _save(insights, insights_dir)
 
         return insights.to_dict()
     except Exception as e:
-        print(f"[continuous-claude] Warning: Session analysis failed: {e}", file=sys.stderr)
+        print(f"[claude-cortex] Warning: Session analysis failed: {e}", file=sys.stderr)
         return None
 
 
@@ -113,7 +113,7 @@ def insights_to_learnings(insights_dict: dict) -> list[dict]:
         )
         return insights.to_learnings()
     except Exception as e:
-        print(f"[continuous-claude] Warning: Failed to convert insights to learnings: {e}", file=sys.stderr)
+        print(f"[claude-cortex] Warning: Failed to convert insights to learnings: {e}", file=sys.stderr)
         return []
 
 
