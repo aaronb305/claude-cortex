@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Blockchain-style ledger memory with performance-based reinforcement for Claude Code",
   "author": {
-    "name": "Aaron"
+    "name": "Claude Cortex Contributors"
   },
   "license": "MIT",
   "keywords": ["ledger", "memory", "learning", "reinforcement", "blockchain"],

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -13,6 +14,8 @@ import fnmatch
 
 from claude_cortex.entities.models import Entity, Relationship, EntityType, RelationshipType
 from claude_cortex.entities.schema import get_full_schema
+
+logger = logging.getLogger(__name__)
 
 
 class EntityGraph:
@@ -139,7 +142,7 @@ class EntityGraph:
         if result.errors:
             # Log errors but continue
             for error in result.errors:
-                print(f"[entity-graph] {error}")
+                logger.warning("Entity extraction error: %s", error)
 
         if not result.entities:
             return 0

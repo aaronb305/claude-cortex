@@ -21,14 +21,14 @@ This will:
 
 ## Dependencies
 
-### Core Features (Included)
-All core functionality works out of the box:
+All features are included by default with `uv sync`:
 
 | Feature | Description | Dependencies |
 |---------|-------------|--------------|
-| Ledger storage | Blockchain-style learning storage | pydantic, click (included) |
+| Ledger storage | Blockchain-style learning storage | pydantic, click |
 | Full-text search | FTS5 keyword search | sqlite3 (Python stdlib) |
-| Cryptographic signing | Ed25519 block signatures | cryptography (included) |
+| Semantic search | Vector similarity search | fastembed, sqlite-vec |
+| Cryptographic signing | Ed25519 block signatures | cryptography |
 | Content-addressed storage | Deduplication via content hash | (included) |
 | Distributed sync | Merkle-based ledger sync | (included) |
 | Handoffs | Work-in-progress state capture | (included) |
@@ -37,27 +37,28 @@ All core functionality works out of the box:
 | Cross-project transfer | Learning suggestions & import | (included) |
 | File locking | Race condition prevention | fcntl (Python stdlib) |
 | Git/PR ingestion | Extract learnings from commits & PRs | gh CLI (for PRs) |
+| Entity graph | Code structure tracking | tree-sitter-language-pack |
+| MCP tools | Low-latency Claude Code integration | mcp |
 
-### Optional Features
+### External Requirements
 
-| Feature | Description | Install Command |
-|---------|-------------|-----------------|
-| **Semantic search** | Vector similarity search | `uv sync --extra semantic` |
+| Requirement | Purpose | Install |
+|-------------|---------|---------|
+| Python 3.10+ | Runtime | System package manager |
+| uv | Package management | `pip install uv` or `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| gh CLI | GitHub PR ingestion | `brew install gh` or system package manager |
 
-**Semantic search** enables finding related learnings even with different wording (e.g., "authentication" matches "login security"). Adds ~500MB of dependencies (ML model).
+### Verify Installation
 
 ```bash
-# Option 1: Install via extras (recommended)
-uv sync --extra semantic
+# Check all dependencies installed
+uv sync
 
-# Option 2: Install all optional features
-uv sync --extra all
-
-# Option 3: Install packages directly
-uv add sentence-transformers sqlite-vec
-
-# Verify installation
+# Verify semantic search
 uv run python -c "from claude_cortex.search.semantic import is_available; print(is_available())"
+
+# Verify entity extraction
+uv run python -c "from claude_cortex.entities.extractors import get_extractor_for_file; print(get_extractor_for_file('test.py'))"
 ```
 
 ## Usage
@@ -141,6 +142,9 @@ uv run cclaude outcome <id> -r success -c "Applied successfully"
 # View pending outcomes (learnings used but not rated)
 uv run cclaude outcomes pending
 
+# Batch process pending feedback
+uv run cclaude outcomes batch
+
 # Promote to global ledger
 uv run cclaude promote -p . --threshold 0.8
 
@@ -183,6 +187,14 @@ uv run cclaude ingest pr                  # Ingest from GitHub PRs
 uv run cclaude ingest pr --since 2w       # PRs from last 2 weeks
 uv run cclaude ingest status              # Show ingestion state
 uv run cclaude ingest reset               # Reset ingestion state
+
+# Entity graph commands (code structure tracking)
+uv run cclaude entities index .           # Index entities in directory
+uv run cclaude entities index . --force   # Force re-index all files
+uv run cclaude entities show <name>       # Show entity details by qualified name
+uv run cclaude entities search <query>    # Search entities by name
+uv run cclaude entities stats             # Show entity graph statistics
+uv run cclaude entities clear             # Clear the entity graph
 ```
 
 ## Git/PR Ingestion
@@ -236,11 +248,18 @@ uv run cclaude ingest pr
 # Ingest PRs from specific timeframe
 uv run cclaude ingest pr --since 2w
 
-# Specific PR
-uv run cclaude ingest pr --pr 123
+# Specific PR by number
+uv run cclaude ingest pr 123
 
 # Include all states (not just merged)
 uv run cclaude ingest pr --state all
+
+# Control what's extracted
+uv run cclaude ingest pr --no-reviews     # Skip review comments
+uv run cclaude ingest pr --no-comments    # Skip discussion comments
+
+# Specify repository (defaults to current git remote)
+uv run cclaude ingest pr --repo owner/repo
 ```
 
 **Requires:** GitHub CLI (`gh`) authenticated via `gh auth login`
@@ -268,6 +287,69 @@ uv run cclaude ingest reset --source git
 ```
 
 State is stored in `.claude/ingestion_state.json`.
+
+## Entity Graph (Code Structure Tracking)
+
+Track code structure relationships using tree-sitter for intelligent codebase understanding.
+
+### What It Does
+
+The entity graph extracts and stores code entities (classes, functions, methods) and their relationships (imports, inheritance, calls) from your codebase. This enables:
+
+- **Dependency tracking**: See what code depends on what
+- **Impact analysis**: Understand what might break when changing code
+- **Codebase navigation**: Find related code across files
+
+### Supported Languages
+
+| Language | File Extensions | Entities Extracted |
+|----------|----------------|-------------------|
+| Python | `.py` | Classes, functions, methods, imports |
+| TypeScript | `.ts`, `.tsx` | Classes, functions, interfaces, imports |
+| JavaScript | `.js`, `.jsx` | Classes, functions, imports |
+
+### CLI Commands
+
+```bash
+# Index all supported files in a directory
+uv run cclaude entities index .
+uv run cclaude entities index ./src --force   # Force re-index
+
+# Search for entities by name
+uv run cclaude entities search "UserAuth"
+
+# Show entity details and relationships
+uv run cclaude entities show "src/auth.py:UserAuth"
+
+# View statistics
+uv run cclaude entities stats
+
+# Clear the entity graph
+uv run cclaude entities clear
+```
+
+### Storage Location
+
+Entity graphs are stored per-project in `.claude/cache/entities.db` (SQLite).
+
+### Dependencies
+
+Entity extraction requires the `tree-sitter-language-pack` package:
+
+```bash
+# Already included in default dependencies
+uv sync
+
+# Or install explicitly
+uv add tree-sitter-language-pack
+```
+
+### How It Works
+
+1. **Indexing**: Files are parsed with tree-sitter to extract entities
+2. **Staleness detection**: Files are only re-indexed when content changes (MD5 hash)
+3. **Relationship tracking**: Imports, inheritance, and function calls are linked
+4. **Full-text search**: Entity names are indexed with SQLite FTS5
 
 ## Continuous Execution Mode
 
@@ -543,6 +625,13 @@ project/.claude/
 │   ├── search/                # SQLite FTS5 + semantic search
 │   ├── suggestions/           # Cross-project recommendation engine
 │   ├── analysis/              # LLM-powered session analysis
+│   ├── entities/              # Code entity graph (tree-sitter)
+│   │   ├── graph.py           # EntityGraph database management
+│   │   ├── models.py          # Entity, Relationship models
+│   │   ├── schema.py          # SQLite schema with FTS5
+│   │   └── extractors/        # Language-specific extractors
+│   │       ├── python.py      # Python AST extraction
+│   │       └── typescript.py  # TypeScript/TSX extraction
 │   ├── sync.py                # Ledger sync protocol (export/import)
 │   └── cli.py                 # CLI interface
 ├── tests/                     # Test suite

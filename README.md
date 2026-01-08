@@ -19,6 +19,8 @@ A blockchain-style ledger memory system with performance-based reinforcement lea
 - **Handoff System**: Work-in-progress state capture for seamless session continuity
 - **Full-Text Search**: SQLite FTS5 search across all learnings with relevance ranking
 - **Session Analysis**: LLM-powered Braintrust-like insights from session transcripts
+- **Git/PR Ingestion**: Extract learnings from commit history and GitHub pull requests
+- **Entity Graph**: Code structure tracking with tree-sitter for dependency analysis
 
 ### Knowledge Categories
 
@@ -242,6 +244,7 @@ All agents use **opus** as the default model for maximum capability.
 │   ├── search.db              # SQLite FTS5 search index
 │   └── semantic.db            # Semantic search vectors (optional)
 ├── hooks/
+│   ├── shared.py              # Shared utilities (file locking, extraction)
 │   ├── session_start.py       # Inject ledger context
 │   ├── post_tool_use.py       # Continuation nudges + learning tracking
 │   ├── pre_compact.py         # Pre-compaction extraction + handoff
@@ -274,6 +277,14 @@ project/.claude/
 │   │   ├── merkle.py          # Merkle tree for efficient sync
 │   │   ├── objects.py         # Content-addressed object store
 │   │   └── crypto.py          # Ed25519 signing and verification
+│   ├── entities/              # Code entity graph (tree-sitter)
+│   │   ├── graph.py           # Entity graph database
+│   │   ├── models.py          # Entity/Relationship models
+│   │   └── extractors/        # Language-specific extractors
+│   ├── ingest/                # Git/PR learning ingestion
+│   │   ├── git_extractor.py   # Git commit parsing
+│   │   ├── pr_extractor.py    # GitHub PR extraction
+│   │   └── state.py           # Incremental ingestion state
 │   ├── runner/                # Continuous execution
 │   ├── handoff/               # Work-in-progress state capture
 │   ├── summaries/             # Session summary storage
