@@ -1,230 +1,173 @@
 # Claude Cortex
 
-A blockchain-style ledger memory system with performance-based reinforcement learning for Claude Code. This plugin enables persistent knowledge capture across sessions with confidence scoring, autonomous execution capabilities, and cross-project knowledge transfer.
+Persistent memory that makes Claude Code smarter across sessions.
 
-## Features
+Install. Restart. That's it.
 
-### Core Capabilities
+## What Happens When You Install Cortex
 
-- **Blockchain-style Ledger**: Immutable knowledge storage with SHA-256 hash verification
-- **Merkle Tree Verification**: O(log n) sync and tamper detection using binary merkle trees
-- **Cryptographic Signatures**: Ed25519 block signing with trust-based key management
-- **Content-Addressed Storage**: Automatic deduplication via content hashing in `objects/` directory
-- **Distributed Sync**: Pull/push between ledgers with Merkle-based diff detection
-- **Confidence Scoring**: Reinforcement learning that adjusts learning reliability based on outcomes
-- **Dual Ledger System**: Global (`~/.claude/ledger/`) and project-specific (`.claude/ledger/`) knowledge bases
-- **Ledger Sync**: Export/import archives for backup and transfer between machines
-- **Autonomous Execution**: Enhanced prompts and hooks for continuous, uninterrupted work
-- **Learning Extraction**: Automatic capture of discoveries, decisions, errors, and patterns
-- **Handoff System**: Work-in-progress state capture for seamless session continuity
-- **Full-Text Search**: SQLite FTS5 search across all learnings with relevance ranking
-- **Session Analysis**: LLM-powered Braintrust-like insights from session transcripts
-- **Git/PR Ingestion**: Extract learnings from commit history and GitHub pull requests
-- **Entity Graph**: Code structure tracking with tree-sitter for dependency analysis
+- Claude remembers what worked and what didn't — across projects
+- Learnings have confidence scores that improve with outcomes
+- Work-in-progress is captured automatically, never lost to compaction
+- Cross-project knowledge surfaces when relevant
+- Code structure is tracked for dependency analysis
 
-### Knowledge Categories
+## What You Don't Need To Do
 
-| Tag | Purpose | Example |
-|-----|---------|---------|
-| `[DISCOVERY]` | New information found | API rate limits at 100/min |
-| `[DECISION]` | Choices made and rationale | Using JWT for stateless auth |
-| `[ERROR]` | Mistakes to avoid | Don't use sync calls in async handler |
-| `[PATTERN]` | Reusable solutions | Repository pattern for data access |
+- Learn CLI commands — everything runs via hooks and MCP tools
+- Manually tag learnings — hooks handle extraction
+- Record outcomes — auto-promoted at high confidence
+- Create handoffs — auto-captured before compaction
+- Promote learnings — auto-promoted at >0.8 confidence + 2 outcomes
 
-### Privacy Suffixes
-
-Control where learnings are stored with optional suffixes:
-
-| Suffix | Behavior |
-|--------|----------|
-| `[DISCOVERY]` | Normal - can be promoted to global |
-| `[DISCOVERY:project]` | Stays in project ledger only |
-| `[DISCOVERY:private]` | Captured but never persisted |
-| `[DISCOVERY:redacted]` | Logged that something was redacted |
-
-### MCP Tools
-
-Low-latency STDIO-based tools for fast ledger access (~10ms vs ~150ms for CLI):
-
-| Tool | Purpose |
-|------|---------|
-| `search_learnings` | Full-text search with category/confidence filters |
-| `get_learning` | Get full learning details by ID |
-| `record_outcome` | Record success/partial/failure outcomes |
-| `list_learnings` | List learnings sorted by confidence |
-| `ledger_stats` | Get ledger statistics |
-
-### TUI Dashboard
-
-Terminal-based dashboard for browsing and managing learnings:
-
-```bash
-cd tui && bun install && bun run tui
-```
-
-Features: Vim-style navigation, real-time search, confidence visualization, outcome recording.
-
-### Confidence-Weighted Extraction
-
-Learnings receive different default confidence based on their source:
-
-| Source | Default Confidence |
-|--------|-------------------|
-| User-tagged `[DISCOVERY]` etc | 0.70 |
-| Stop hook pattern detection | 0.50 |
-| LLM session analysis | 0.40 |
-| Consensus (multiple sources) | 0.85 |
-
-## Installation
-
-### Quick Install
+## Install
 
 ```bash
 cd ~/projects/claude-cortex
 ./install.sh
 ```
 
-This will:
-1. Install the Python package with `uv`
-2. Set up hooks in `~/.claude/hooks/`
-3. Configure Claude Code settings
-4. Initialize the global ledger at `~/.claude/ledger/`
-
-### Plugin Installation
+Or as a Claude Code plugin:
 
 ```bash
-# Load plugin for testing (temporary)
-claude --plugin-dir ~/projects/claude-cortex
-
-# Or install permanently from local marketplace
 claude plugin install claude-cortex@claude-cortex --scope user
 ```
 
-### Manual Setup
+Restart Claude Code. You're done.
 
-```bash
-# Install dependencies
-uv sync
+## How It Works
 
-# Run the CLI
-uv run cclaude --help
-```
+### Automatic Hooks (zero effort)
 
-## Usage
+| Hook | What It Does | Token Cost |
+|------|-------------|------------|
+| **SessionStart** | Injects pending work + top 3 learnings | ~180 tokens |
+| **PostToolUse** | Silently tracks learning references | 0 tokens |
+| **PreCompact** | Saves handoff + summary + extracts tagged learnings | ~25 tokens |
+| **SessionEnd** | Extracts learnings, auto-promotes to global ledger | 0 tokens |
+| **SubagentStop** | Tracks agent deployment effectiveness | 0 tokens |
 
-### Automatic Knowledge Capture
+### MCP Tools (on-demand, ~10ms)
 
-Just use Claude as usual - hooks automatically:
-- **SessionStart**: Inject high-confidence learnings from ledger
-- **PostToolUse**: Nudge continuation when tasks remain, track learning references
-- **PreCompact**: Extract learnings + save handoff/summary before context compaction
-- **SessionEnd**: Extract new learnings from transcript, suggest outcome recording
-- **SubagentStop**: Track agent deployments and effectiveness
-- **Stop**: Nudge for immediate learning tagging after significant work
+Claude calls these naturally when it needs context:
 
-### CLI Commands
+| Tool | Purpose |
+|------|---------|
+| `search_learnings` | Full-text search with category/confidence filters |
+| `get_learning` | Get full learning details by ID |
+| `list_learnings` | List learnings sorted by confidence |
+| `record_outcome` | Record success/partial/failure outcome |
+| `ledger_stats` | Get ledger statistics |
+| `get_handoff` | Get latest work-in-progress handoff |
+| `get_suggestions` | Cross-project learning suggestions |
+| `tag_learning` | Programmatic learning capture |
+| `get_session_summary` | Recent session summaries |
+| `entity_search` | Search code entities (functions, classes, etc.) |
+| `entity_show` | Entity details with dependencies/dependents |
+| `entity_stats` | Code entity graph statistics |
 
-```bash
-# Run continuous execution mode
-uv run cclaude run "Add authentication" -p . --max-iterations 10
+### Agents (7 specialized)
 
-# List learnings (filter by confidence)
-uv run cclaude list --min-confidence 0.7
-uv run cclaude list --show-decay          # Show confidence decay info
+| Agent | Model | Trigger |
+|-------|-------|---------|
+| `code-implementer` | opus | "implement this", "write code for" |
+| `test-writer` | sonnet | "write tests for", "add test coverage" |
+| `research-agent` | opus | "research how to", "investigate options" |
+| `refactorer` | sonnet | "refactor this", "clean up the code" |
+| `bug-investigator` | opus | "debug this", "why is this failing" |
+| `continuous-runner` | opus | "keep working", "run continuously", "plan this" |
+| `knowledge-retriever` | haiku | "what did we learn", "previous patterns" |
 
-# Show learning details
-uv run cclaude show <learning-id>
-
-# Record outcome (updates confidence)
-uv run cclaude outcome <learning-id> -r success -c "Applied successfully"
-uv run cclaude outcomes pending           # View learnings needing feedback
-
-# Promote high-confidence learnings to global
-uv run cclaude promote -p . --threshold 0.8
-
-# Verify ledger chain integrity
-uv run cclaude verify
-
-# Search learnings (full-text search)
-uv run cclaude search "authentication JWT"
-uv run cclaude search "pattern" --category pattern
-
-# Rebuild/repair search index
-uv run cclaude reindex
-uv run cclaude reindex --repair           # Retry failed indexing only
-
-# Handoffs (work-in-progress capture)
-uv run cclaude handoff create --completed "Finished auth" --pending "Add tests"
-uv run cclaude handoff show
-uv run cclaude handoff list
-
-# Summaries
-uv run cclaude summary show
-uv run cclaude summary list
-
-# Cross-project suggestions
-uv run cclaude suggest                    # Show relevant learnings from global
-uv run cclaude suggest --apply <id>       # Import suggestion to project
-
-# Content cache migration (performance)
-uv run cclaude migrate
-
-# Session analysis (Braintrust-like insights)
-uv run cclaude analyze session transcript.md --save-learnings
-uv run cclaude analyze metrics -p .
-
-# Sync between ledgers
-uv run cclaude sync status                # Check sync state
-uv run cclaude sync pull /path/to/remote  # Pull missing blocks
-uv run cclaude sync push /path/to/remote  # Push local blocks
-uv run cclaude sync export backup.tar.gz  # Export to archive
-uv run cclaude sync import backup.tar.gz  # Import from archive
-
-# Key management (Ed25519 signing)
-uv run cclaude keys generate --name "You" # Create keypair
-uv run cclaude keys trust key.pem --name "Alice"  # Add trusted key
-uv run cclaude keys list                  # List trusted keys
-uv run cclaude keys revoke <key_id>       # Revoke a key
-
-# Verification with signatures
-uv run cclaude verify --merkle --signatures
-```
-
-### Agents
-
-All agents use **opus** as the default model for maximum capability.
-
-**Execution Agents** (deploy for focused, parallelizable work):
-
-| Agent | Trigger | Purpose |
-|-------|---------|---------|
-| `code-implementer` | "implement this", "write code for" | Write/modify code for specific tasks |
-| `test-writer` | "write tests for", "add test coverage" | Create tests (can run parallel with implementation) |
-| `research-agent` | "research how to", "investigate options" | Investigate APIs, libraries, patterns |
-| `refactorer` | "refactor this", "clean up the code" | Restructure code while preserving behavior |
-| `bug-investigator` | "debug this", "why is this failing" | Debug and trace issues to find root causes |
-| `doc-writer` | "document this", "update README" | Write/update documentation |
-
-**Coordination Agents** (deploy for multi-step workflows):
-
-| Agent | Trigger | Purpose |
-|-------|---------|---------|
-| `continuous-runner` | "keep working", "run continuously" | Coordinate autonomous multi-iteration sessions |
-| `knowledge-retriever` | "what did we learn", "previous patterns" | Search and surface relevant learnings |
-| `learning-extractor` | "extract learnings", end of session | Analyze and categorize insights |
-| `session-continuity` | "resume my work", "what was I working on" | Manage session transitions and handoffs |
-| `outcome-tracker` | "record outcome", "this worked/didn't work" | Track outcomes to improve confidence scores |
-| `task-orchestrator` | "decompose task", "plan implementation" | Break down complex tasks and coordinate agents |
-
-### Skills
+### Skills (3)
 
 | Skill | Purpose |
 |-------|---------|
-| `ledger-knowledge` | Query and retrieve from ledger |
-| `learning-capture` | Manually capture insights to ledger |
+| `ledger-knowledge` | Query, search, and retrieve from ledger |
+| `learning-capture` | Capture insights to ledger |
 | `handoff-management` | Save/load work-in-progress state |
-| `search-learnings` | Full-text search across learnings |
-| `outcome-prompt` | Suggest outcome recording for applied learnings |
+
+## Learning Tags
+
+Tag insights as you work — they're captured automatically:
+
+```
+[DISCOVERY] PyRosetta DDG requires consistent repacking for WT and mutant
+[DECISION] Using fcntl.flock() for file locking — atomic and handles crashes
+[ERROR] Don't modify block files after creation — breaks hash verification
+[PATTERN] For backwards compat, use Optional with defaults in Pydantic models
+```
+
+### Privacy Suffixes
+
+| Suffix | Stored | Promoted to Global | Content |
+|--------|--------|-------------------|---------|
+| `[DISCOVERY]` (default) | Yes | Yes | Original |
+| `[DISCOVERY:project]` | Yes | No | Original |
+| `[DISCOVERY:private]` | No | N/A | Not stored |
+| `[DISCOVERY:redacted]` | Yes | Yes | [REDACTED] |
+
+## Confidence & Reinforcement
+
+- **Outcomes**: Success +10%, Partial +2%, Failure -15%
+- **Decay**: 180-day half-life, minimum 50% floor
+- **Auto-promote**: Project → global at confidence >0.8 with 2+ outcomes
+- **Deduplication**: Content-hashed, rediscovery boosts confidence
+
+## Entity Graph (Code Structure)
+
+Tree-sitter extraction tracks functions, classes, methods, imports and their relationships.
+
+| Language | File Extensions | Entities Extracted |
+|----------|----------------|-------------------|
+| Python | `.py` | Classes, functions, methods, imports |
+| TypeScript | `.ts`, `.tsx` | Classes, functions, interfaces, imports |
+| JavaScript | `.js`, `.jsx` | Classes, functions, imports |
+| Rust | `.rs` | Structs, enums, traits, functions, methods, imports |
+
+```bash
+# Index your codebase
+uv run cclaude entities index .
+
+# Search for entities
+uv run cclaude entities search "UserAuth"
+```
+
+Or use MCP tools: `entity_search`, `entity_show`, `entity_stats`.
+
+## CLI Commands (Admin/Debug)
+
+The CLI is optional — for advanced users who want direct control:
+
+```bash
+# List/search learnings
+uv run cclaude list --min-confidence 0.7
+uv run cclaude search "authentication"
+
+# Record outcomes
+uv run cclaude outcome <id> -r success -c "Applied successfully"
+
+# Verify ledger integrity
+uv run cclaude verify --merkle --signatures
+
+# Key management (Ed25519 signing)
+uv run cclaude keys generate --name "You"
+uv run cclaude keys trust key.pem --name "Alice"
+
+# Sync between machines
+uv run cclaude sync export backup.tar.gz
+uv run cclaude sync import backup.tar.gz
+
+# Git/PR ingestion
+uv run cclaude ingest git --since 30d
+uv run cclaude ingest pr
+
+# Entity graph
+uv run cclaude entities index .
+uv run cclaude entities search "MyClass"
+
+# Search index repair
+uv run cclaude reindex
+```
 
 ## Architecture
 
@@ -232,186 +175,55 @@ All agents use **opus** as the default model for maximum capability.
 ~/.claude/
 ├── ledger/                    # Global ledger (cross-project knowledge)
 │   ├── blocks/*.json          # Immutable learning blocks
-│   ├── objects/               # Content-addressed storage (sharded by hash)
-│   │   └── ab/ab12cd34.json   # Content stored by 16-char hash
-│   ├── index.json             # Chain index with head pointer
-│   ├── reinforcements.json    # Confidence scores, outcomes, content cache
-│   ├── merkle.json            # Merkle tree for efficient sync/verification
-│   ├── identity.json          # This ledger's public key + identity
-│   ├── .private_key           # Private signing key (mode 600)
-│   └── trusted_keys.json      # Trusted public keys from other users
+│   ├── objects/               # Content-addressed storage
+│   ├── index.json             # Chain index
+│   ├── reinforcements.json    # Confidence scores + outcomes
+│   ├── merkle.json            # Merkle tree for sync
+│   └── identity.json          # Ed25519 signing identity
 ├── cache/
-│   ├── search.db              # SQLite FTS5 search index
-│   └── semantic.db            # Semantic search vectors (optional)
-├── hooks/
-│   ├── shared.py              # Shared utilities (file locking, extraction)
-│   ├── session_start.py       # Inject ledger context
-│   ├── post_tool_use.py       # Continuation nudges + learning tracking
-│   ├── pre_compact.py         # Pre-compaction extraction + handoff
-│   ├── session_end.py         # Extract learnings + outcome suggestions
-│   ├── subagent_stop.py       # Agent deployment tracking
-│   └── stop.py                # Learning tagging nudges
-└── settings.json              # Hook configuration
+│   ├── search.db              # SQLite FTS5 index
+│   └── semantic.db            # Semantic search vectors
+└── hooks/                     # Installed hook scripts
 
 project/.claude/
 ├── ledger/                    # Project-specific ledger
-│   ├── merkle.json            # Merkle tree for this ledger
-│   ├── identity.json          # Project-specific signing identity
-│   └── trusted_keys.json      # Trusted keys for this project
-├── handoffs/                  # Work-in-progress state captures
-│   └── <session>/handoff-<timestamp>.md
+├── handoffs/                  # Work-in-progress captures
 ├── summaries/                 # Session summaries
-│   └── <session>/summary-<timestamp>.json
-└── insights/                  # LLM-powered analysis results
-    └── <session>/insights-<timestamp>.json
+└── cache/entities.db          # Entity graph (SQLite)
 
 ~/projects/claude-cortex/
-├── .claude-plugin/plugin.json # Plugin manifest
-├── agents/                    # Custom agents (12 total, opus model)
-├── skills/                    # User-invocable skills (5)
-├── hooks/                     # Hook implementations
+├── .claude-plugin/plugin.json # Plugin manifest (v0.2.0)
+├── agents/                    # 7 agent definitions
+├── skills/                    # 3 skill definitions
+├── hooks/                     # Hook scripts + shared utilities
 ├── src/claude_cortex/         # Python package
-│   ├── ledger/                # Blockchain ledger implementation
-│   │   ├── chain.py           # Ledger management + search integration
-│   │   ├── models.py          # Learning, Block, Outcome models
-│   │   ├── merkle.py          # Merkle tree for efficient sync
-│   │   ├── objects.py         # Content-addressed object store
-│   │   └── crypto.py          # Ed25519 signing and verification
+│   ├── ledger/                # Blockchain implementation
 │   ├── entities/              # Code entity graph (tree-sitter)
-│   │   ├── graph.py           # Entity graph database
-│   │   ├── models.py          # Entity/Relationship models
-│   │   └── extractors/        # Language-specific extractors
-│   ├── ingest/                # Git/PR learning ingestion
-│   │   ├── git_extractor.py   # Git commit parsing
-│   │   ├── pr_extractor.py    # GitHub PR extraction
-│   │   └── state.py           # Incremental ingestion state
-│   ├── runner/                # Continuous execution
-│   ├── handoff/               # Work-in-progress state capture
-│   ├── summaries/             # Session summary storage
-│   ├── search/                # Full-text + semantic search
+│   ├── ingest/                # Git/PR ingestion
+│   ├── search/                # FTS5 + semantic search
+│   ├── handoff/               # WIP state capture
+│   ├── summaries/             # Session summaries
 │   ├── suggestions/           # Cross-project recommendations
 │   ├── analysis/              # LLM-powered session analysis
-│   ├── sync.py                # Ledger sync protocol (export/import)
-│   └── cli.py                 # Command-line interface
-└── install.sh                 # Installation script
-```
-
-## How It Works
-
-### Blockchain Ledger
-
-Each learning is stored in an immutable block with:
-- **UUID**: Unique identifier for referencing
-- **Category**: DISCOVERY, DECISION, ERROR, or PATTERN
-- **Content**: The actual insight (max 500 chars)
-- **Confidence**: 0.0-1.0 score, starts at 0.5
-- **Hash**: SHA-256 of block contents for integrity
-- **Parent**: Reference to previous block (forming a chain)
-
-### Confidence Scoring
-
-Confidence adjusts based on recorded outcomes:
-- **SUCCESS**: +0.10 increase
-- **PARTIAL**: +0.02 increase
-- **FAILURE**: -0.15 decrease
-
-High-confidence learnings (>0.8) can be promoted from project to global ledger.
-
-### Autonomous Execution
-
-The system encourages continuous, uninterrupted work through:
-1. **Runner prompts**: Explicit instructions to continue without confirmation
-2. **PostToolUse hook**: Nudges when tasks remain after tool use
-3. **Agent instructions**: "Never stop unless truly blocked"
-4. **TodoWrite integration**: Track progress and keep working
-
-### Handoff System
-
-Handoffs capture work-in-progress state for session continuity:
-- **Automatic**: Created before context compaction (PreCompact hook)
-- **Manual**: `cclaude handoff create` for explicit checkpoints
-- **Content**: Completed tasks, pending tasks, blockers, modified files, context notes
-- **Storage**: `.claude/handoffs/<session>/handoff-<timestamp>.md`
-- **Injection**: Latest handoff is shown at session start
-
-### Full-Text Search
-
-SQLite FTS5 provides fast, relevance-ranked search:
-- **Porter stemmer**: Matches word variations (e.g., "authenticate" matches "authentication")
-- **BM25 ranking**: Results ordered by relevance
-- **Snippets**: Highlighted matching text in results
-- **Auto-indexing**: Learnings indexed when blocks are added
-- **Category filtering**: `--category pattern` to narrow results
-
-## Configuration
-
-### Stop Conditions
-
-The runner supports configurable stop conditions:
-- `IterationLimit`: Maximum number of iterations
-- `CostLimit`: Maximum API cost in USD
-- `TimeLimit`: Maximum execution duration
-- `NoNewLearnings`: Stop after N iterations without new learnings
-- `ConfidenceThreshold`: Stop when target learning reaches confidence
-
-### Hooks
-
-Hooks are registered in `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{"command": "python ~/.claude/hooks/session_start.py"}],
-    "PostToolUse": [{"command": "python ~/.claude/hooks/post_tool_use.py"}],
-    "PreCompact": [{"command": "python ~/.claude/hooks/pre_compact.py"}],
-    "SessionEnd": [{"command": "python ~/.claude/hooks/session_end.py"}],
-    "SubagentStop": [{"command": "python ~/.claude/hooks/subagent_stop.py"}],
-    "Stop": [{"command": "python ~/.claude/hooks/stop.py"}]
-  }
-}
+│   ├── mcp_server.py          # 12 MCP tools
+│   └── cli.py                 # Admin CLI
+├── tui/                       # Terminal dashboard (Bun/Ink)
+└── tests/                     # 527 tests
 ```
 
 ## Development
 
 ```bash
-# Install dependencies
 uv sync
-
-# Run tests
-uv run pytest
-
-# Run CLI locally
-uv run cclaude --help
+uv run pytest                  # Run tests (527 passing)
+uv run cclaude --help          # CLI
+cd tui && bun install && bun run tui  # TUI dashboard
 ```
-
-## Comparison with Similar Systems
-
-| Feature | Claude Cortex | Other Systems |
-|---------|-------------------------|---------------|
-| Data integrity | SHA-256 blockchain + Merkle tree | None |
-| Cryptographic signing | Ed25519 with trust levels | None |
-| Content deduplication | Content-addressed storage | None |
-| Distributed sync | Merkle-based pull/push | None |
-| Confidence scoring | Yes (reinforcement) | No |
-| Global knowledge | Yes (promotion) | Project-only |
-| Outcome tracking | Yes | No |
-| Autonomous execution | Enhanced prompts + hooks | Basic |
-| Handoffs (WIP state) | Yes | Some |
-| Full-text search | SQLite FTS5 | Limited |
-| Sync/export | Archive-based transfer | None |
-| Session analysis | LLM-powered insights | None |
-
-## Acknowledgements
-
-This project was inspired by [Continuous-Claude-v2](https://github.com/parcadei/Continuous-Claude-v2) by parcadei, which pioneered the concept of continuous autonomous Claude sessions with persistent memory.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE) for details.
 
 ## Contributing
 
-Contributions welcome! Please ensure:
-- Tests pass (`uv run pytest`)
-- Code follows existing patterns
-- Learnings are documented with appropriate tags
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

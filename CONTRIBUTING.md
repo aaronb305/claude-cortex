@@ -122,7 +122,7 @@ test(search): add FTS5 edge case tests
 ```
 src/claude_cortex/
 ├── ledger/          # Blockchain ledger implementation
-├── entities/        # Code entity graph (tree-sitter)
+├── entities/        # Code entity graph (tree-sitter: Python, TS, JS, Rust)
 ├── ingest/          # Git/PR learning ingestion
 ├── search/          # Full-text and semantic search
 ├── runner/          # Continuous execution mode
@@ -130,12 +130,13 @@ src/claude_cortex/
 ├── summaries/       # Session summary storage
 ├── suggestions/     # Cross-project recommendations
 ├── analysis/        # LLM-powered session analysis
-└── cli.py           # Command-line interface
+├── mcp_server.py    # 12 MCP tools (primary plugin interface)
+└── cli.py           # Admin CLI (debug/repair)
 
-tests/               # Test suite (pytest)
-hooks/               # Claude Code hook scripts
-agents/              # Custom agent definitions
-skills/              # User-invocable skills
+tests/               # Test suite (527 tests)
+hooks/               # Hook scripts (5 hooks + shared utilities)
+agents/              # Agent definitions (7 agents)
+skills/              # Skill definitions (3 skills)
 ```
 
 ## Pull Request Guidelines
