@@ -297,18 +297,8 @@ def main():
     # Combine messages for output
     status_msg = " ".join(messages) if messages else ""
 
-    # Add prompt injection asking Claude to tag untagged learnings
-    # This is the safety net before context compaction
-    tagging_prompt = """
-
-⚠️ **Context compaction imminent** - Before your context is summarized, please review this session for any untagged learnings:
-
-1. **Bugs fixed** → `[ERROR] what caused it and how to avoid`
-2. **Decisions made** → `[DECISION] what was chosen and why`
-3. **Discoveries** → `[DISCOVERY] new insight about how something works`
-4. **Patterns identified** → `[PATTERN] reusable solution`
-
-If you've already tagged all learnings, acknowledge this. If there are untagged insights from this session, tag them now before they're lost to compaction."""
+    # Brief safety net before context compaction
+    tagging_prompt = "\n\nTag untagged insights before compaction: [DISCOVERY] [DECISION] [ERROR] [PATTERN]"
 
     output["message"] = status_msg + tagging_prompt
 

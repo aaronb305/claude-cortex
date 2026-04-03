@@ -77,46 +77,53 @@ Once the plugin is installed, **everything works automatically**. Just use Claud
 ### Automatic Hooks
 
 The plugin uses hooks to provide seamless integration:
-- **SessionStart**: Injects high-confidence learnings + latest handoff + recent summaries
-- **PostToolUse**: Nudges continuation when tasks remain, tracks learning references
+- **SessionStart**: Injects slim context (~180 tokens): pending work + top 3 learnings + MCP pointer
+- **PostToolUse**: Silent learning reference tracking (zero token injection)
 - **PreCompact**: Saves handoff + summary + extracts learnings before compaction
-- **SessionEnd**: Extracts new learnings from transcript, suggests outcome recording
+- **SessionEnd**: Extracts learnings, auto-promotes high-confidence learnings, suggests outcomes
 - **SubagentStop**: Tracks agent deployments and effectiveness when subagents complete
-- **Stop**: Nudges for immediate learning tagging after significant work
+
+### MCP Tools
+
+| Tool | Purpose |
+|------|---------|
+| `search_learnings` | Full-text search with category/confidence filters |
+| `get_learning` | Get full learning details by ID |
+| `record_outcome` | Record success/partial/failure outcome |
+| `list_learnings` | List learnings sorted by confidence |
+| `ledger_stats` | Get ledger statistics |
+| `get_handoff` | Get latest handoff for session continuity |
+| `get_suggestions` | Cross-project learning suggestions |
+| `tag_learning` | Programmatic learning capture |
+| `get_session_summary` | Recent session summaries |
+| `entity_search` | Search code entities by name |
+| `entity_show` | Entity details with dependencies/dependents |
+| `entity_stats` | Entity graph statistics |
 
 ### Agents
 
-All agents use **opus** as the default model.
-
 **Execution Agents** (deploy for focused work):
-| Agent | Trigger |
-|-------|---------|
-| `code-implementer` | "implement this", "write code for" |
-| `test-writer` | "write tests for", "add test coverage" |
-| `research-agent` | "research how to", "investigate options" |
-| `refactorer` | "refactor this", "clean up the code" |
-| `bug-investigator` | "debug this", "why is this failing" |
-| `doc-writer` | "document this", "update README" |
+| Agent | Model | Trigger |
+|-------|-------|---------|
+| `code-implementer` | opus | "implement this", "write code for" (includes docs) |
+| `test-writer` | sonnet | "write tests for", "add test coverage" |
+| `research-agent` | opus | "research how to", "investigate options" |
+| `refactorer` | sonnet | "refactor this", "clean up the code" |
+| `bug-investigator` | opus | "debug this", "why is this failing" |
 
 **Coordination Agents** (deploy for workflows):
-| Agent | Trigger |
-|-------|---------|
-| `continuous-runner` | "keep working", "run continuously" |
-| `knowledge-retriever` | "what did we learn", "previous patterns" |
-| `learning-extractor` | "extract learnings", end of session |
-| `session-continuity` | "resume my work", "what was I working on" |
-| `outcome-tracker` | "record outcome", "this worked" |
-| `task-orchestrator` | "decompose task", "plan implementation", "what agents to use" |
+| Agent | Model | Trigger |
+|-------|-------|---------|
+| `continuous-runner` | opus | "keep working", "run continuously", "plan this" |
+| `knowledge-retriever` | haiku | "what did we learn", "previous patterns" |
 
 ### Skills
 
 | Skill | Purpose |
 |-------|---------|
-| `ledger-knowledge` | Query and retrieve from ledger |
+| `ledger-knowledge` | Query, search, and retrieve from ledger |
 | `learning-capture` | Capture insights to ledger |
 | `handoff-management` | Save/load work-in-progress state |
-| `search-learnings` | Full-text search across learnings |
-| `outcome-prompt` | Suggest outcome recording for applied learnings |
 
 ### CLI Commands (Optional Power Tools)
 
@@ -307,6 +314,7 @@ The entity graph extracts and stores code entities (classes, functions, methods)
 | Python | `.py` | Classes, functions, methods, imports |
 | TypeScript | `.ts`, `.tsx` | Classes, functions, interfaces, imports |
 | JavaScript | `.js`, `.jsx` | Classes, functions, imports |
+| Rust | `.rs` | Structs, enums, traits, functions, methods, imports |
 
 ### CLI Commands
 
@@ -596,8 +604,8 @@ project/.claude/
 
 ~/projects/claude-cortex/
 ├── .claude-plugin/            # Plugin manifest
-├── agents/                    # Custom agents (12 total)
-├── skills/                    # Skills (5)
+├── agents/                    # Custom agents (7 total)
+├── skills/                    # Skills (3)
 ├── hooks/                     # Hook scripts
 │   ├── shared.py              # Shared utilities (file locking, extraction)
 │   ├── session_start.py       # Inject ledger context + handoff

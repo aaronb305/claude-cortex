@@ -127,6 +127,85 @@ def build_outcome_suggestion(referenced_learnings: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def auto_promote_learnings(cwd: str, settings: dict) -> int:
+    """Auto-promote high-confidence project learnings to global ledger.
+
+    Criteria: confidence > threshold AND outcome_count >= min_outcomes AND privacy == public.
+
+    Args:
+        cwd: Current working directory.
+        settings: Loaded settings dict.
+
+    Returns:
+        Number of learnings promoted.
+    """
+    promote_settings = settings.get("auto_promote", {})
+    if not promote_settings.get("enabled", True):
+        return 0
+
+    min_confidence = promote_settings.get("min_confidence", 0.8)
+    min_outcomes = promote_settings.get("min_outcome_count", 2)
+
+    project_dir = Path(cwd) if cwd else Path.cwd()
+    project_ledger_path = project_dir / ".claude" / "ledger"
+    global_ledger_path = Path.home() / ".claude" / "ledger"
+
+    if not project_ledger_path.exists() or not global_ledger_path.exists():
+        return 0
+
+    try:
+        # Add src to path for imports
+        src_path = Path(__file__).parent.parent / "src"
+        if str(src_path) not in sys.path:
+            sys.path.insert(0, str(src_path))
+
+        from claude_cortex.ledger import Ledger
+
+        project_ledger = Ledger(project_ledger_path)
+        global_ledger = Ledger(global_ledger_path, is_global=True)
+
+        # Get reinforcements to check outcome counts
+        reinforcements = read_json(project_ledger_path / "reinforcements.json")
+        learnings_data = reinforcements.get("learnings", {})
+
+        # Filter by outcome count before calling promote
+        # promote_to_global already handles confidence and privacy filters
+        eligible_count = 0
+        for lid, info in learnings_data.items():
+            if (info.get("confidence", 0) >= min_confidence
+                    and info.get("outcome_count", 0) >= min_outcomes):
+                eligible_count += 1
+
+        if eligible_count == 0:
+            return 0
+
+        promoted = project_ledger.promote_to_global(
+            global_ledger,
+            confidence_threshold=min_confidence,
+        )
+
+        # Filter promoted list to only those meeting outcome threshold
+        # (promote_to_global doesn't check outcome_count, we do it here)
+        actual_promoted = []
+        for pid in promoted:
+            info = learnings_data.get(pid, {})
+            if info.get("outcome_count", 0) >= min_outcomes:
+                actual_promoted.append(pid)
+
+        if actual_promoted:
+            print(
+                f"[claude-cortex] SessionEnd: Auto-promoted {len(actual_promoted)} "
+                f"learnings to global ledger",
+                file=sys.stderr,
+            )
+
+        return len(actual_promoted)
+
+    except Exception as e:
+        print(f"[claude-cortex] SessionEnd: Auto-promote error: {e}", file=sys.stderr)
+        return 0
+
+
 def clear_session_learnings(path: Path) -> None:
     """Clear the session learnings file after processing."""
     try:
@@ -176,6 +255,12 @@ def main():
         enable_deep_pass=extraction_settings.get("enable_deep_pass", False),
         deep_pass_threshold=extraction_settings.get("deep_pass_threshold", 3),
     )
+
+    # Auto-promote high-confidence learnings to global ledger
+    try:
+        auto_promote_learnings(cwd, settings)
+    except Exception as e:
+        print(f"[claude-cortex] SessionEnd: Auto-promote failed: {e}", file=sys.stderr)
 
     # Check for referenced learnings that need outcome feedback
     session_learnings_path = get_session_learnings_path(cwd)

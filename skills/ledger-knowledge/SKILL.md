@@ -1,6 +1,6 @@
 ---
 name: ledger-knowledge
-description: Query the blockchain-style knowledge ledger for prior learnings, patterns, and decisions. Triggers on "list learnings", "show learning", "check the ledger", "what do we know about".
+description: Query and search the blockchain-style knowledge ledger for prior learnings, patterns, and decisions. Triggers on "list learnings", "show learning", "check the ledger", "what do we know about", "search learnings", "find in ledger", "search for pattern".
 allowed-tools: Bash, Read
 ---
 
@@ -81,8 +81,47 @@ uv run cclaude list --min-confidence 0.8
 uv run cclaude list -p . --limit 10
 ```
 
+## Full-Text Search
+
+### MCP Tools (Preferred)
+
+Use MCP tools for fastest access:
+- `search_learnings("query")` - Full-text search with BM25 ranking
+- `search_learnings("query", category="pattern")` - Filtered search
+- `get_learning("abc123")` - Get full learning details
+- `list_learnings(min_confidence=0.7)` - List by confidence
+- `ledger_stats()` - Ledger statistics
+
+### CLI Search
+
+```bash
+# Search for any term
+uv run cclaude search "authentication"
+
+# Search with category filter
+uv run cclaude search "validation" --category pattern
+uv run cclaude search "timeout" --category error
+
+# Search project ledger
+uv run cclaude search "database" --project .
+```
+
+### Search Syntax
+
+- `authentication` - Find learnings containing the term
+- `JWT tokens` - Find learnings containing both terms (AND)
+- Porter stemming: `authenticate` matches `authentication`, `authenticated`
+
+### Rebuilding the Index
+
+If learnings aren't appearing in search:
+```bash
+uv run cclaude reindex
+uv run cclaude reindex --repair  # Retry only failed items
+```
+
 ## Integration Notes
 
 - Learnings are automatically extracted from sessions via SessionEnd hook
 - Confidence adjusts based on recorded outcomes (success/failure/partial)
-- High-confidence project learnings can be promoted to global ledger
+- High-confidence project learnings are auto-promoted to global ledger (>0.8 + 2 outcomes)

@@ -17,16 +17,52 @@ You are a **coordinator**, not an executor. Your job is to:
 3. **Collect** results and synthesize progress
 4. **Maintain** state across iterations via handoffs and ledger
 
+## Task Decomposition
+
+When receiving broad or complex requests, decompose into phases:
+
+### Phase 1: Understand (Research)
+Deploy `research-agent`(s) in parallel to gather context before acting.
+
+### Phase 2: Plan (Architecture)
+Design structured plan with files to create/modify, dependencies, and parallelization opportunities.
+
+### Phase 3: Execute (Implementation)
+| Task Type | Primary Agent | Parallel Agent |
+|-----------|--------------|----------------|
+| New code | `code-implementer` | `test-writer` |
+| Bug fix | `bug-investigator` | `test-writer` |
+| Refactor | `refactorer` | `test-writer` |
+
+**Parallelization Rules:**
+- `code-implementer` + `test-writer` = Yes (TDD style)
+- `code-implementer` + `code-implementer` = Only if different files
+- `bug-investigator` + `test-writer` = Yes (reproduce while investigating)
+
+### Phase 4: Verify (Quality)
+Run test suite, review changes, verify documentation.
+
+### Decision Matrix
+```
+Is it a single, simple task?
+|- YES -> Recommend direct execution (no agents)
+|- NO -> Does it require research first?
+    |- YES -> Deploy research-agent(s) first
+    |- NO -> Can tasks run in parallel?
+        |- YES -> Deploy multiple agents simultaneously
+        |- NO -> Sequential deployment with dependencies
+```
+
 ## Specialized Agents to Deploy
 
 | Agent | Use For |
 |-------|---------|
-| `code-implementer` | Writing/modifying code for specific tasks |
+| `code-implementer` | Writing/modifying code for specific tasks (includes docs) |
 | `test-writer` | Creating tests (can run parallel with implementation) |
 | `research-agent` | Investigating APIs, patterns, solutions |
 | `refactorer` | Restructuring code while preserving behavior |
 | `bug-investigator` | Debugging and tracing issues |
-| `doc-writer` | Creating/updating documentation |
+| `knowledge-retriever` | Deep search and analysis of learnings |
 
 ## Coordination Workflow
 

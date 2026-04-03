@@ -153,8 +153,7 @@ configure_settings() {
         echo '    "SessionEnd": [{"hooks": [{"type": "command", "command": "'"$HOOKS_DIR"'/session_end.py"}]}],'
         echo '    "PreCompact": [{"hooks": [{"type": "command", "command": "'"$HOOKS_DIR"'/pre_compact.py"}]}],'
         echo '    "PostToolUse": [{"hooks": [{"type": "command", "command": "'"$HOOKS_DIR"'/post_tool_use.py"}]}],'
-        echo '    "SubagentStop": [{"hooks": [{"type": "command", "command": "'"$HOOKS_DIR"'/subagent_stop.py"}]}],'
-        echo '    "Stop": [{"hooks": [{"type": "command", "command": "'"$HOOKS_DIR"'/stop.py"}]}]'
+        echo '    "SubagentStop": [{"hooks": [{"type": "command", "command": "'"$HOOKS_DIR"'/subagent_stop.py"}]}]'
         echo '  }'
         echo ""
         return
@@ -212,16 +211,6 @@ configure_settings() {
                         {
                             "type": "command",
                             "command": "'"$HOOKS_DIR"'/subagent_stop.py"
-                        }
-                    ]
-                }
-            ],
-            "Stop": [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "'"$HOOKS_DIR"'/stop.py"
                         }
                     ]
                 }

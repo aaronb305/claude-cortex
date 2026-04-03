@@ -238,7 +238,7 @@ class EntityGraph:
             Tuple of (files_indexed, entities_indexed)
         """
         if patterns is None:
-            patterns = ["**/*.py", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"]
+            patterns = ["**/*.py", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.rs"]
 
         directory = Path(directory)
         files_indexed = 0

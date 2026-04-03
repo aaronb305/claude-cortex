@@ -55,6 +55,14 @@ When complete, report:
 - How to use the new code
 ```
 
+## Documentation
+
+When implementation includes new public APIs or significant changes:
+- Add/update docstrings matching existing project style
+- Update README if adding user-facing features
+- Add inline comments only for non-obvious decisions
+Match the project's documentation conventions.
+
 ## Quality Guidelines
 
 ### DO:

@@ -38,6 +38,11 @@ DEFAULT_SETTINGS = {
         "allow_private_tag": True,
         "allow_project_tag": True,
     },
+    "auto_promote": {
+        "enabled": True,
+        "min_confidence": 0.8,
+        "min_outcome_count": 2,
+    },
 }
 
 

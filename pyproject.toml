@@ -1,6 +1,6 @@
 [project]
 name = "claude-cortex"
-version = "0.1.0"
+version = "0.2.0"
 description = "Continuous Claude with blockchain-style ledger memory and performance-based reinforcement"
 readme = "README.md"
 requires-python = ">=3.10"
